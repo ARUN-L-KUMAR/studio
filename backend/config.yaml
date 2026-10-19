@@ -1,0 +1,73 @@
+tasks:
+  text_to_video:
+    space: Lightricks/LTX-Video-Distilled
+    api_name: /text_to_video
+    params:
+      prompt: '{prompt}'
+      height: 704
+      width: 512
+  image_to_video:
+    space: Lightricks/LTX-Video-Distilled
+    api_name: /image_to_video
+    params:
+      prompt: '{prompt}'
+      input_image_filepath: '{image}'
+  video_to_video:
+    space: your-username/your-v2v-space
+    api_name: /predict
+    params:
+      video: '{video}'
+      prompt: '{prompt}'
+  text_to_image:
+    space: black-forest-labs/FLUX.1-schnell
+    api_name: /infer
+    params:
+      prompt: '{prompt}'
+      width: 1024
+      height: 1024
+  image_to_image:
+    space: your-username/your-image-edit-space
+    api_name: /predict
+    params:
+      image: '{image}'
+      prompt: '{prompt}'
+  face_swap:
+    space: hugging-apps/bfs-best-face-swap
+    api_name: /face_swap
+    pick: last
+    params:
+      reference_face: '{face}'
+      target_image: '{image}'
+      resolution: 1536
+      num_inference_steps: 6
+caption:
+  provider: gemini
+  models:
+    gemini: gemini-3.5-flash-lite
+    groq: qwen/qwen3.8-27b
+    openrouter: openrouter/free
+    huggingface: Qwen/Qwen3-VL-30B-A3B-Instruct
+    hfspaces: openbmb/MiniCPM-V-4.7-Demo
+    openai: gpt-4o-mini
+  model: gpt-4o-mini
+  tone: emotional, loving, attractive, human, with emojis
+  language: English
+  max_hashtags: 12
+  my_hashtags:
+  - '#reels'
+  - '#explore'
+  - '#viral'
+music:
+  folder: music
+  enabled: true
+  volume: 0.8
+instagram:
+  post_type: REELS
+  dry_run: false
+schedule:
+  run_in_server: true   # run queued jobs while the web server is open (use false if you run 'python batch.py daemon')
+  daily_times:
+  - 09:00
+  - '19:00'
+generation:
+  max_input_px: 1536

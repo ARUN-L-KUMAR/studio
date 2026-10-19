@@ -1,0 +1,40 @@
+# ---- Secrets and private data: never commit these ----
+.env
+.env.*
+!.env.example
+auth.json
+ig_accounts.json
+ig_session.json
+ig_login_state.json
+ig_token_state.json
+hf_quota.json
+jobs.yaml
+
+# ---- Your pictures, videos and music (large, private) ----
+backend/output/
+backend/input/
+backend/music/
+
+# ---- Python ----
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- Frontend ----
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+
+# ---- Editors, OS, logs ----
+.vscode/
+.idea/
+.claude/
+.DS_Store
+Thumbs.db
+*.log

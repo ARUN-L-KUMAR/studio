@@ -1,0 +1,29 @@
+# InstaStudio AI backend. Install with:  pip install -r requirements.txt
+# Versions are the ones this project was built and tested with.
+# You also need ffmpeg on the machine (slideshows, adding music to videos): https://ffmpeg.org
+
+# Web server
+fastapi==0.143.3
+uvicorn==0.54.0
+python-multipart==0.0.32      # file uploads / form posts
+pydantic==2.13.5
+httpx==0.28.1
+
+# Settings and data
+python-dotenv==1.2.4
+PyYAML==6.0.3
+requests==2.34.2
+
+# AI generation (Hugging Face Spaces)
+gradio_client==2.7.2
+
+# Media
+pillow==12.3.0
+imageio-ffmpeg==0.6.0         # bundled ffmpeg binary used when ffmpeg is not on PATH
+
+# Instagram
+cloudinary==1.46.3            # hosts pictures/videos for the official Instagram API
+instagrapi==3.0.25            # phone-style login, used for songs on posts
+
+# Optional: the old Streamlit screen (streamlit run app.py). The main app does not need it.
+# streamlit==1.66.0
