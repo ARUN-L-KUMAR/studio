@@ -1158,7 +1158,7 @@ if (DIST_DIR / "index.html").exists():
     if (DIST_DIR / "assets").exists():
         app.mount("/assets", StaticFiles(directory=str(DIST_DIR / "assets")), name="assets")
 
-    @app.get("/{full_path:path}")
+    @app.api_route("/{full_path:path}", methods=["GET", "HEAD"])   # HEAD too, so health checks and `curl -I` work
     def serve_spa(full_path: str):
         if full_path.startswith(("api/", "output/", "input/", "music/")):
             raise HTTPException(status_code=404, detail="Not found")
@@ -1171,7 +1171,7 @@ if (DIST_DIR / "index.html").exists():
             raise HTTPException(status_code=404, detail="Not found")
         return FileResponse(DIST_DIR / "index.html")
 else:
-    @app.get("/")
+    @app.api_route("/", methods=["GET", "HEAD"])
     def serve_index():
         return {"message": "InstaStudio AI backend running. Build the UI with `cd frontend && npm run build`."}
 
