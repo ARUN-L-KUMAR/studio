@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +26,7 @@ from dotenv import load_dotenv
 import pipeline as P
 import instagram_api
 import auth
+import folders
 from urllib.parse import unquote
 import captioner
 from batch import load_jobs, save_jobs, execute
@@ -38,6 +39,7 @@ INPUT_DIR = BASE_DIR / "input"
 MUSIC_DIR = BASE_DIR / "music"
 
 OUTPUT_DIR.mkdir(exist_ok=True)
+folders.configure(OUTPUT_DIR)
 INPUT_DIR.mkdir(exist_ok=True)
 MUSIC_DIR.mkdir(exist_ok=True)
 
@@ -55,9 +57,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Folder PINs: /output/<folder>/... is refused while that folder is locked (see folders.py). Added before the sign-in
+# guard so the sign-in check runs first.
+app.middleware("http")(folders.guard)
 # Sign-in: every /api, /output, /input and /music request needs the session cookie (see auth.py)
 app.middleware("http")(auth.guard)
 app.include_router(auth.router)
+app.include_router(folders.router)
 
 # In-memory status for currently active background generation
 active_generation = {
@@ -1052,52 +1058,76 @@ def _unlinked_folders():
         for d in sorted(OUTPUT_DIR.iterdir()):
             if d.is_dir() and d.name not in owned and not d.name.startswith("."):
                 n = sum(1 for f in d.iterdir() if f.is_file() and f.suffix.lower() in GALLERY_EXTS)
-                out.append({"name": d.name, "count": n})
+                out.append({"name": d.name, "count": n, "locked": folders.is_locked(d.name)})
     return out
 
+def _lock_map(request: Request) -> dict:
+    """"locked" / "open" for every folder that has a PIN, keyed the way the Vault names it: an account id or "folder:<name>"."""
+    out = {}
+    for a in instagram_api.accounts():
+        try:
+            state = folders.lock_state(request, instagram_api.account_folder(a["id"]))
+        except instagram_api.InstagramApiError:
+            continue
+        if state != "none":
+            out[str(a["id"])] = state
+    for name in folders.locked_names():
+        if not instagram_api.folder_owner(name):
+            out["folder:" + name] = folders.lock_state(request, name)
+    return out
+
+def _folder_listing(request: Request, name: str, **extra) -> dict:
+    """Files of one folder. A folder with a PIN that has not been entered in this browser lists nothing."""
+    state = folders.lock_state(request, name)
+    files = [] if state == "locked" else _gallery_files(OUTPUT_DIR / name)
+    return {"files": files, "count": len(files), "folder": name, "protected": state != "none", "locked": state == "locked", **extra}
+
 @app.get("/api/gallery")
-def get_gallery(scope: str = ""):
-    """Generated files of ONE Instagram account (the active one unless `scope` names another), or the files that
-    are not assigned to any account (`scope=unassigned`). With no account connected, every file is listed."""
+def get_gallery(request: Request, scope: str = ""):
+    """Generated files of ONE Instagram account (the active one unless `scope` names another), the files that
+    are not assigned to any account (`scope=unassigned`), or a custom folder (`scope=folder:<name>`).
+    With no account connected, every file is listed."""
     unassigned = _gallery_files(OUTPUT_DIR)
     if not instagram_api.accounts():
         return {"files": unassigned, "count": len(unassigned), "scope": "all", "account": None, "unassigned_count": 0}
-    folders = _unlinked_folders()
+    meta = {"unassigned_count": len(unassigned), "folders": _unlinked_folders(), "locks": _lock_map(request)}
     if scope == "unassigned":
-        return {"files": unassigned, "count": len(unassigned), "scope": "unassigned", "account": None,
-                "unassigned_count": len(unassigned), "folders": folders}
+        return {"files": unassigned, "count": len(unassigned), "scope": "unassigned", "account": None, **meta}
     if scope.startswith("folder:"):
-        name = scope[len("folder:"):]
-        target = _inside(OUTPUT_DIR, name)
-        if not target or not target.is_dir() or target.resolve() == OUTPUT_DIR.resolve():
+        name = folders.resolve_folder(scope[len("folder:"):])
+        if not name:
             raise HTTPException(status_code=400, detail="That folder does not exist.")
-        files = _gallery_files(target)
-        return {"files": files, "count": len(files), "scope": scope, "account": None, "folder": name,
-                "unassigned_count": len(unassigned), "folders": folders}
+        return _folder_listing(request, name, scope=scope, account=None, **meta)
     try:
         acc = instagram_api.get_account(scope or None)
     except instagram_api.InstagramApiError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    folder = instagram_api.account_folder(acc["id"])
-    files = _gallery_files(OUTPUT_DIR / folder)
-    return {"files": files, "count": len(files), "scope": str(acc["id"]), "account": acc.get("username"),
-            "folder": folder, "unassigned_count": len(unassigned), "folders": folders}
+    return _folder_listing(request, instagram_api.account_folder(acc["id"]), scope=str(acc["id"]), account=acc.get("username"), **meta)
 
 class MoveRequest(BaseModel):
     paths: List[str]            # file paths as listed by /api/gallery ("redmedia.inn/x.png" or "x.png")
-    to: str                     # an account id, or "unassigned"
+    to: str                     # an account id, "folder:<name>" (a custom folder), or "unassigned"
 
 @app.post("/api/gallery/move")
-def move_gallery_files(payload: MoveRequest):
-    """Move generated files into another account's folder (or back to unassigned). Queued jobs that point at a moved file
-    are updated so they still find it."""
+def move_gallery_files(payload: MoveRequest, request: Request):
+    """Move generated files into another account's folder, a custom folder, or back to unassigned. Queued jobs that
+    point at a moved file are updated so they still find it. Folders with a PIN must be unlocked first."""
     if payload.to == "unassigned":
         dest = OUTPUT_DIR
+    elif payload.to.startswith("folder:"):
+        name = folders.resolve_folder(payload.to[len("folder:"):])
+        if not name:
+            raise HTTPException(status_code=400, detail="That folder does not exist.")
+        dest = OUTPUT_DIR / name
     else:
         try:
             dest = OUTPUT_DIR / instagram_api.account_folder(payload.to)
         except instagram_api.InstagramApiError as e:
             raise HTTPException(status_code=400, detail=str(e))
+    if dest != OUTPUT_DIR:
+        folders.require_open(request, dest.name)
+    for rel in payload.paths:                         # every source folder must be open too, before anything moves
+        folders.require_open(request, folders.folder_of(rel))
     dest.mkdir(parents=True, exist_ok=True)
     moved, skipped = {}, 0
     for rel in payload.paths:
@@ -1138,7 +1168,8 @@ def move_gallery_files(payload: MoveRequest):
     return {"status": "success", "moved": len(moved), "skipped": skipped}
 
 @app.delete("/api/gallery/{filename:path}")
-def delete_gallery_item(filename: str):
+def delete_gallery_item(filename: str, request: Request):
+    folders.require_open(request, folders.folder_of(filename))
     target = _inside(OUTPUT_DIR, filename)
     if target and target.exists() and target.is_file() and target.suffix.lower() in GALLERY_EXTS:
         target.unlink()

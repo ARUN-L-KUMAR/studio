@@ -120,6 +120,16 @@ export const api = {
   moveMedia: (paths: string[], to: string) =>
     request<{ moved: number; skipped: number }>("/api/gallery/move", json("POST", { paths, to })),
 
+  createFolder: (name: string, pin = "") => request<{ name: string; locked: boolean }>("/api/folders", json("POST", { name, pin })),
+  deleteFolder: (name: string) => request<{ status: string }>(`/api/folders/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  unlockFolder: (name: string, pin: string) =>
+    request<{ status: string }>(`/api/folders/${encodeURIComponent(name)}/unlock`, json("POST", { pin })),
+  lockFolder: (name: string) => request<{ status: string }>(`/api/folders/${encodeURIComponent(name)}/lock`, { method: "POST" }),
+  setFolderPin: (name: string, pin: string, current = "") =>
+    request<{ status: string }>(`/api/folders/${encodeURIComponent(name)}/pin`, json("POST", { new: pin, current })),
+  removeFolderPin: (name: string, current: string) =>
+    request<{ status: string }>(`/api/folders/${encodeURIComponent(name)}/pin/remove`, json("POST", { current })),
+
   saveHfTokens: (tokens: string[]) =>
     request<{ message: string }>("/api/settings/hf_tokens", json("POST", { tokens })),
   saveInstagram: (data: { username?: string; password?: string; verification_code?: string }) =>

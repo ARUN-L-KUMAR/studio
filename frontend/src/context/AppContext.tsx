@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api } from "../api/client";
-import type { AppConfig, GalleryFile, Health, QueueJob } from "../api/types";
+import type { AppConfig, FolderInfo, GalleryFile, GalleryListing, Health, QueueJob } from "../api/types";
 import { useToast } from "./ToastContext";
 
 interface AppState {
@@ -11,8 +11,10 @@ interface AppState {
   /** Account whose files `gallery` holds, and how many files belong to no account yet */
   galleryAccount: string | null;
   unassignedCount: number;
-  /** Folders in output/ that belong to no account (for example ones made by hand) */
-  unlinkedFolders: { name: string; count: number }[];
+  /** Custom folders in output/ (made here or by hand) that belong to no account */
+  unlinkedFolders: FolderInfo[];
+  /** Folder name, PIN state and the rest of the last listing of the active account's folder */
+  galleryMeta: GalleryListing | null;
   online: boolean;
   refreshAll: () => Promise<void>;
   refreshQueue: () => Promise<void>;
@@ -31,7 +33,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [gallery, setGallery] = useState<GalleryFile[]>([]);
   const [galleryAccount, setGalleryAccount] = useState<string | null>(null);
   const [unassignedCount, setUnassignedCount] = useState(0);
-  const [unlinkedFolders, setUnlinkedFolders] = useState<{ name: string; count: number }[]>([]);
+  const [unlinkedFolders, setUnlinkedFolders] = useState<FolderInfo[]>([]);
+  const [galleryMeta, setGalleryMeta] = useState<GalleryListing | null>(null);
   const [online, setOnline] = useState(true);
 
   const refreshAll = useCallback(async () => {
@@ -61,6 +64,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setGalleryAccount(g.account);
       setUnassignedCount(g.unassigned_count ?? 0);
       setUnlinkedFolders(g.folders ?? []);
+      setGalleryMeta(g);
     } catch {
       /* surfaced by health check */
     }
@@ -92,8 +96,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [config, toast]);
 
   const value = useMemo(
-    () => ({ health, config, queue, gallery, galleryAccount, unassignedCount, unlinkedFolders, online, refreshAll, refreshQueue, refreshGallery, setConfig, toggleDryRun }),
-    [health, config, queue, gallery, galleryAccount, unassignedCount, unlinkedFolders, online, refreshAll, refreshQueue, refreshGallery, toggleDryRun],
+    () => ({ health, config, queue, gallery, galleryAccount, unassignedCount, unlinkedFolders, galleryMeta, online, refreshAll, refreshQueue, refreshGallery, setConfig, toggleDryRun }),
+    [health, config, queue, gallery, galleryAccount, unassignedCount, unlinkedFolders, galleryMeta, online, refreshAll, refreshQueue, refreshGallery, toggleDryRun],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

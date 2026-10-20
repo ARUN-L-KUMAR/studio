@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import clsx from "clsx";
-import { Check, CheckSquare, Download, FolderInput, FolderOpen, Image as ImageIcon, Send, Trash2, Video } from "lucide-react";
+import { Check, CheckSquare, Download, FolderInput, FolderOpen, FolderPlus, Image as ImageIcon, KeyRound, Lock, LockOpen, Send, Trash2, Video } from "lucide-react";
 import { api } from "../api/client";
 import Segmented from "../components/ui/Segmented";
 import Select from "../components/ui/Select";
@@ -17,12 +17,13 @@ import type { GalleryFile, GalleryListing } from "../api/types";
 import { fileToResult } from "../utils/media";
 import InstagramPosts from "../components/studio/InstagramPosts";
 import MediaViewer from "../components/studio/MediaViewer";
+import { LockedCard, NewFolderModal, PinModal } from "../components/studio/FolderDialogs";
 
 type Filter = "all" | "video" | "image";
 type Source = "vault" | "instagram";
 
 export default function Gallery() {
-  const { gallery, health, unassignedCount, unlinkedFolders, refreshAll, refreshGallery } = useApp();
+  const { gallery, galleryMeta, health, unassignedCount, unlinkedFolders, refreshAll, refreshGallery } = useApp();
   const { loadMedia } = useStudio();
   const toast = useToast();
   const confirm = useConfirm();
@@ -58,7 +59,16 @@ export default function Gallery() {
     setView("");                                   // switching the active account in the top bar shows its folder
   }, [activeId]);
 
-  const shown = view ? other?.files ?? [] : gallery;
+  const current = view ? (other && other.scope === view ? other : null) : galleryMeta;     // ignore a listing of the folder we just left
+  const shown = view ? current?.files ?? [] : gallery;
+  const curFolder = current?.folder ?? "";                // real folder name; "" for Unassigned
+  const isProtected = !!current?.protected;
+  const isLocked = !!current?.locked;
+  const locks = galleryMeta?.locks ?? {};
+  const lockIcon = (key: string) =>
+    locks[key] ? (locks[key] === "locked" ? <Lock className="w-3.5 h-3.5 shrink-0 text-muted" /> : <LockOpen className="w-3.5 h-3.5 shrink-0 text-primary-400" />) : undefined;
+  const [pinOpen, setPinOpen] = useState(false);
+  const [newFolder, setNewFolder] = useState<null | "page" | "move">(null);   // "move": opened from the Move dialog
   const customFolder = view.startsWith("folder:") ? view.slice(7) : "";
   const folderLabel = view === "unassigned" ? "Unassigned" : customFolder ? customFolder : accName(view || activeId);
   const [linkTo, setLinkTo] = useState("");
@@ -83,6 +93,37 @@ export default function Gallery() {
   const reloadAll = async () => {
     await refreshGallery();
     await loadOther();
+  };
+
+  const lockNow = async () => {
+    if (!curFolder) return;
+    try {
+      await api.lockFolder(curFolder);
+      endSelect();
+      await reloadAll();
+      toast(`${curFolder} is locked`, "info");
+    } catch (e) {
+      toast((e as Error).message, "error");
+    }
+  };
+  const folderCreated = async (name: string) => {
+    await refreshGallery();
+    if (newFolder === "move") setDest(`folder:${name}`);
+    else setView(`folder:${name}`);
+    setNewFolder(null);
+  };
+  const deleteFolder = async () => {
+    if (!customFolder) return;
+    const ok = await confirm({ title: "Delete this folder?", text: `“${customFolder}” is empty and will be removed.` });
+    if (!ok) return;
+    try {
+      await api.deleteFolder(customFolder);
+      toast("Folder deleted", "info");
+      setView("");
+      await refreshGallery();
+    } catch (e) {
+      toast((e as Error).message, "error");
+    }
   };
 
   const files = useMemo(
@@ -162,7 +203,7 @@ export default function Gallery() {
     setBusy(true);
     try {
       const r = await api.moveMedia(moving.map((f) => f.path), dest);
-      toast(`${r.moved} file${r.moved === 1 ? "" : "s"} moved to ${dest === "unassigned" ? "Unassigned" : accName(dest)}`, "success");
+      toast(`${r.moved} file${r.moved === 1 ? "" : "s"} moved to ${dest === "unassigned" ? "Unassigned" : dest.startsWith("folder:") ? dest.slice(7) : accName(dest)}`, "success");
       setMoving(null);
       setPicked(new Set());
       await reloadAll();
@@ -173,7 +214,14 @@ export default function Gallery() {
     }
   };
   const destOptions = [
-    ...accounts.map((a) => ({ value: a.id, label: `@${a.username ?? a.id}`, hint: a.default ? "Active account" : undefined })),
+    ...accounts.map((a) => ({
+      value: a.id, label: `@${a.username ?? a.id}`, leading: lockIcon(a.id),
+      hint: locks[a.id] === "locked" ? "Locked: unlock it first" : a.default ? "Active account" : undefined, disabled: locks[a.id] === "locked",
+    })),
+    ...unlinkedFolders.map((f) => ({
+      value: `folder:${f.name}`, label: f.name, leading: lockIcon(`folder:${f.name}`),
+      hint: locks[`folder:${f.name}`] === "locked" ? "Locked: unlock it first" : "Custom folder", disabled: locks[`folder:${f.name}`] === "locked",
+    })),
     { value: "unassigned", label: "Unassigned", hint: "Not tied to any account" },
   ].filter((o) => o.value !== (view || activeId));
 
@@ -196,7 +244,7 @@ export default function Gallery() {
           <h2>Media Vault</h2>
           <p>
             {customFolder
-              ? "A folder in the output folder that is not linked to any account yet."
+              ? "A custom folder. Move files into it from any other folder, and protect it with a PIN if you like."
               : view === "unassigned"
               ? "Older files that are not in any account folder. Move them to the account they belong to."
               : accounts.length
@@ -214,12 +262,39 @@ export default function Gallery() {
             alignRight
             menuMinWidth={230}
             options={[
-              ...accounts.map((a) => ({ value: a.id, label: `@${a.username ?? a.id}`, hint: a.default ? "Active account" : undefined })),
+              ...accounts.map((a) => ({
+                value: a.id, label: `@${a.username ?? a.id}`, leading: lockIcon(a.id),
+                hint: locks[a.id] === "locked" ? "Locked · PIN needed" : a.default ? "Active account" : undefined,
+              })),
               { value: "unassigned", label: "Unassigned", hint: unassignedCount ? `${unassignedCount} older files` : "No files here" },
-              ...unlinkedFolders.map((f) => ({ value: `folder:${f.name}`, label: f.name, hint: `${f.count} file${f.count === 1 ? "" : "s"}, not linked to an account` })),
+              ...unlinkedFolders.map((f) => ({
+                value: `folder:${f.name}`, label: f.name, leading: lockIcon(`folder:${f.name}`),
+                hint: locks[`folder:${f.name}`] === "locked" ? "Locked · PIN needed" : `Custom folder · ${f.count} file${f.count === 1 ? "" : "s"}`,
+              })),
             ]}
-            renderValue={() => <span className="inline-flex items-center gap-2"><FolderOpen className="w-4 h-4" />{folderLabel}</span>}
+            renderValue={() => (
+              <span className="inline-flex items-center gap-2">
+                <FolderOpen className="w-4 h-4" />{folderLabel}
+                {isProtected && (isLocked ? <Lock className="w-3.5 h-3.5 text-muted" /> : <LockOpen className="w-3.5 h-3.5 text-primary-400" />)}
+              </span>
+            )}
           />
+        )}
+        {accounts.length > 0 && (
+          <button className="btn btn-sm btn-soft" onClick={() => setNewFolder("page")}>
+            <FolderPlus className="ic-sm w-4 h-4" /><span>New folder</span>
+          </button>
+        )}
+        {curFolder && !isProtected && (
+          <button className="btn btn-sm btn-soft" onClick={() => setPinOpen(true)} title="Ask for a PIN before this folder opens">
+            <Lock className="ic-sm w-4 h-4" /><span>Add PIN</span>
+          </button>
+        )}
+        {curFolder && isProtected && !isLocked && (
+          <>
+            <button className="btn btn-sm btn-soft" onClick={lockNow}><Lock className="ic-sm w-4 h-4" /><span>Lock now</span></button>
+            <button className="btn btn-sm btn-soft" onClick={() => setPinOpen(true)} aria-label="Change or remove PIN" title="Change or remove PIN"><KeyRound className="ic-sm w-4 h-4" /></button>
+          </>
         )}
         <Segmented<Filter>
           value={filter}
@@ -259,7 +334,7 @@ export default function Gallery() {
       {customFolder && (
         <div className="flex flex-wrap items-center gap-3 mb-5 px-4 py-3 rounded-md bg-surface-2 border border-line">
           <span className="text-[13px] text-muted flex-1 min-w-[200px]">
-            <strong className="text-fg">{customFolder}</strong> is not the folder of any account, so it only shows here. Link it to an account to make it that account&apos;s folder.
+            <strong className="text-fg">{customFolder}</strong> is a custom folder. Link it to an account to make it that account&apos;s folder, so new generations are saved in it.
           </span>
           <div className="w-[220px]">
             <Select ariaLabel="Account to link" value={linkTo} onChange={setLinkTo} options={accounts.map((a) => ({ value: a.id, label: `@${a.username ?? a.id}`, hint: a.default ? "Active account" : undefined }))} />
@@ -282,9 +357,21 @@ export default function Gallery() {
         </div>
       )}
 
-      {files.length === 0 ? (
+      {isLocked ? (
+        <LockedCard folder={curFolder} onUnlocked={reloadAll} />
+      ) : files.length === 0 ? (
         <div className="card">
-          <EmptyState image="empty-gallery.svg" title="No media found" text={customFolder ? "This folder has no pictures or videos." : accounts.length ? `Nothing saved for ${folderLabel} yet. New generations are saved in the folder of the active account.` : "Head to the Studio and create your first AI generation."} action={<button className="btn btn-primary btn-sm" onClick={() => navigate("/studio")}>Open Studio</button>} />
+          <EmptyState
+            image="empty-gallery.svg"
+            title="No media found"
+            text={customFolder ? "This folder has no pictures or videos. Select files in another folder and use Move to bring them here." : accounts.length ? `Nothing saved for ${folderLabel} yet. New generations are saved in the folder of the active account.` : "Head to the Studio and create your first AI generation."}
+            action={
+              <div className="flex flex-wrap justify-center gap-2.5">
+                <button className="btn btn-primary btn-sm" onClick={() => navigate("/studio")}>Open Studio</button>
+                {customFolder && shown.length === 0 && <button className="btn btn-ghost btn-sm" onClick={deleteFolder}><Trash2 className="ic-sm w-4 h-4" /><span>Delete folder</span></button>}
+              </div>
+            }
+          />
         </div>
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-5">
@@ -359,14 +446,19 @@ export default function Gallery() {
       />
 
       <Modal
-        open={!!moving}
+        open={!!moving && newFolder !== "move"}
         onClose={() => !busy && setMoving(null)}
         title="Move to another folder"
         subtitle={moving ? `${moving.length} file${moving.length === 1 ? "" : "s"} selected` : undefined}
         icon={FolderInput}
         size="sm"
       >
-        <span className="label">Destination</span>
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="label !mb-0">Destination</span>
+          <button className="btn btn-sm btn-ghost !px-2" onClick={() => setNewFolder("move")} disabled={busy}>
+            <FolderPlus className="ic-sm w-4 h-4" /><span>New folder</span>
+          </button>
+        </div>
         <Select ariaLabel="Destination folder" value={dest} onChange={setDest} options={destOptions} placeholder="Choose a folder" />
         <p className="hint mt-3">Scheduled posts that use these files keep working.</p>
         <div className="flex justify-end gap-2.5 mt-6">
@@ -376,6 +468,18 @@ export default function Gallery() {
           </button>
         </div>
       </Modal>
+
+      <NewFolderModal open={newFolder !== null} onClose={() => setNewFolder(null)} onCreated={folderCreated} />
+      <PinModal
+        open={pinOpen && !!curFolder}
+        onClose={() => setPinOpen(false)}
+        folder={curFolder}
+        isProtected={isProtected}
+        onDone={async () => {
+          setPinOpen(false);
+          await reloadAll();
+        }}
+      />
     </div>
   );
 }

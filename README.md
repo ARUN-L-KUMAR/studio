@@ -33,7 +33,7 @@ Studio/
 └── .gitignore
 ```
 
-Files that hold secrets or your data (`.env`, `auth.json`, `ig_*.json`, `jobs.yaml`, `hf_quota.json`, `output/`, `input/`, `music/`) are listed in `.gitignore` and are never committed.
+Files that hold secrets or your data (`.env`, `auth.json`, `folder_locks.json`, `ig_*.json`, `jobs.yaml`, `hf_quota.json`, `output/`, `input/`, `music/`) are listed in `.gitignore` and are never committed.
 
 ## Set up
 
@@ -80,7 +80,7 @@ Songs on posts use a phone-style login (username and password, or a session ID) 
 3. Set the login password **before** anyone else can reach it: `python backend/set_password.py`. Until a password exists, the app only opens on the server itself.
 4. Start it with `python backend/run_web.py` and keep it running (a service, `tmux`, or similar). Scheduled posts run inside this process, so the server must stay on.
 5. Use HTTPS (a Cloudflare Tunnel or Caddy in front). Without it the password travels unencrypted. If the site uses its own domain, add it to `APP_ALLOWED_ORIGINS`.
-6. Back up `backend/output`, `backend/input`, `backend/music`, `backend/.env`, `backend/auth.json`, `backend/ig_*.json` and `backend/jobs.yaml`.
+6. Back up `backend/output`, `backend/input`, `backend/music`, `backend/.env`, `backend/auth.json`, `backend/folder_locks.json`, `backend/ig_*.json` and `backend/jobs.yaml`.
 
 ## Notes
 

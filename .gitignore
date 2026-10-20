@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 auth.json
+folder_locks.json
 ig_accounts.json
 ig_session.json
 ig_login_state.json

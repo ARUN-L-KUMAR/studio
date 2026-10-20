@@ -187,8 +187,20 @@ export interface GalleryListing {
   folder?: string;
   /** Files in the output folder that belong to no account yet */
   unassigned_count: number;
-  /** Folders in the output folder that no account uses yet */
-  folders?: { name: string; count: number }[];
+  /** Folders in the output folder that no account uses yet (custom folders) */
+  folders?: FolderInfo[];
+  /** This folder has a PIN, and it has not been entered in this browser: `files` is empty */
+  locked?: boolean;
+  /** This folder has a PIN (entered or not) */
+  protected?: boolean;
+  /** Every folder with a PIN, keyed by account id or "folder:<name>" */
+  locks?: Record<string, "locked" | "open">;
+}
+
+export interface FolderInfo {
+  name: string;
+  count: number;
+  locked: boolean;
 }
 
 export interface GenerationResult {

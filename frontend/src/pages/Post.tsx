@@ -18,7 +18,7 @@ const MAX_ITEMS = 10;
 
 export default function Post() {
   const { media, showMedia, setCaption, setSong, postOpts, setPostOpts } = useStudio();
-  const { gallery, galleryAccount, config, health } = useApp();
+  const { gallery, galleryAccount, galleryMeta, config, health } = useApp();
   const toast = useToast();
   const navigate = useNavigate();
   const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -148,7 +148,13 @@ export default function Post() {
           </div>
 
           {gallery.length === 0 ? (
-            <p className="text-[13px] text-muted py-6 text-center">The vault is empty. Generate your first image or Reel in the Studio.</p>
+            galleryMeta?.locked ? (
+              <p className="text-[13px] text-muted py-6 text-center">
+                The folder of {galleryAccount ? `@${galleryAccount}` : "this account"} is locked. <button className="underline text-primary-400" onClick={() => navigate("/gallery")}>Open the Vault</button> and enter its PIN to use its files.
+              </p>
+            ) : (
+              <p className="text-[13px] text-muted py-6 text-center">The vault is empty. Generate your first image or Reel in the Studio.</p>
+            )
           ) : (
             <div className="flex gap-3 overflow-x-auto pb-2 no-scrollbar -mx-1 px-1">
               {gallery.map((f) => {
