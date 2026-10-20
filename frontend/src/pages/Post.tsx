@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, Film, FolderOpen, Image as ImageIcon, Instagram, Smartphone, Sliders, Video, X, Zap } from "lucide-react";
+import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, Film, FolderOpen, Image as ImageIcon, Instagram, Send, Smartphone, Sliders, Video, X, Zap } from "lucide-react";
 import clsx from "clsx";
 import PhoneSimulator from "../components/studio/PhoneSimulator";
 import CaptionStudio from "../components/studio/CaptionStudio";
@@ -17,6 +17,27 @@ import StatusBadges from "../components/vault/StatusBadges";
 import { fileToResult } from "../utils/media";
 
 const MAX_ITEMS = 10;
+
+/** A round status icon whose explanation appears on hover or keyboard focus, so it does not take a row of its own. */
+function StatusTip({ icon, bad, label, title, text }: { icon: React.ReactNode; bad?: boolean; label: string; title: string; text: string }) {
+  return (
+    <span className="relative group inline-flex">
+      <span
+        tabIndex={0}
+        role="img"
+        aria-label={`${title}. ${text}`}
+        className={clsx("grid place-items-center w-8 h-8 rounded-md cursor-default", bad ? "bg-danger/15 text-danger" : "bg-primary-600/15 text-primary-400")}
+        data-status={label}
+      >
+        {icon}
+      </span>
+      <span role="tooltip" className="pointer-events-none absolute left-0 bottom-full mb-2 z-30 w-72 px-3 py-2 rounded-md glass border border-line text-[12.5px] leading-snug text-fg opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 group-focus-within:opacity-100 group-focus-within:translate-y-0 transition duration-150">
+        <strong className="block text-[13px]">{title}</strong>
+        <span className="text-muted">{text}</span>
+      </span>
+    </span>
+  );
+}
 
 export default function Post() {
   const { media, showMedia, setCaption, setSong, postOpts, setPostOpts } = useStudio();
@@ -120,48 +141,16 @@ export default function Post() {
     setScheduleOpen(true);
   };
 
+  const igTitle = official ? "Instagram API connected" : igReady ? "Instagram connected" : sessionExpired ? "Instagram session expired" : "Instagram not connected";
+  const igText = official
+    ? (accountList.length > 1 ? "Posts go to the active account (top bar). Pick another with “Post to” for this post only. Songs post to the browser-login account." : "Posts photos, Reels and carousels with your access token. Songs use your browser session.")
+    : igReady ? (health?.keys.instagram.preview ?? "Ready to publish.")
+    : sessionExpired ? "Instagram logged you out. Paste a fresh session ID in Settings." : "Add your login or session ID before publishing.";
+  const liveTitle = dry ? "Dry run is on" : "Live publishing is on";
+  const liveText = dry ? "Publish Now only tests the flow. Nothing is posted." : "Publish Now will post to your real account.";
+
   return (
     <div className="space-y-6">
-      {/* Status strip */}
-      <Reveal>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className={clsx("card !p-4 flex items-center gap-3.5", igReady ? "" : "!border-danger/40")}>
-            <span className={clsx("grid place-items-center w-10 h-10 rounded-md", igReady ? "bg-primary-600/15 text-primary-400" : "bg-danger/15 text-danger")}>
-              <Instagram className="ic" />
-            </span>
-            <div className="flex-1 min-w-0">
-              <strong className="block text-[14px]">{official ? "Instagram API connected" : igReady ? "Instagram connected" : sessionExpired ? "Instagram session expired" : "Instagram not connected"}</strong>
-              <span className="block text-[12px] text-dim truncate">{official ? (accountList.length > 1 ? "Posts go to the active account (top bar). Pick another here for this post only. Songs post to the browser-login account." : "Posts photos, Reels and carousels with your access token. Songs use your browser session.") : igReady ? health?.keys.instagram.preview : sessionExpired ? "Instagram logged you out. Paste a fresh session ID in Settings." : "Add your login or session ID before publishing."}</span>
-            </div>
-            {!igReady && <Link to="/settings" className="btn btn-sm btn-secondary">{sessionExpired ? "Reconnect" : "Connect"}</Link>}
-            {official && accountList.length > 0 && (
-              <Select
-                ariaLabel="Post to account"
-                className="!w-[190px] !py-2 text-[13px]"
-                alignRight
-                menuMinWidth={230}
-                value={postOpts.account || accountList.find((a) => a.default)?.id || ""}
-                onChange={(v) => setPostOpts({ account: v })}
-                options={accountList.map((a) => ({
-                  value: a.id,
-                  label: `@${a.username ?? a.id}`,
-                  hint: a.default ? "Active account" : "This post only",
-                }))}
-              />
-            )}
-          </div>
-          <div className="card !p-4 flex items-center gap-3.5">
-            <span className={clsx("grid place-items-center w-10 h-10 rounded-md", dry ? "bg-primary-600/15 text-primary-400" : "bg-danger/15 text-danger")}>
-              {dry ? <CheckCircle2 className="ic" /> : <AlertTriangle className="ic" />}
-            </span>
-            <div className="flex-1 min-w-0">
-              <strong className="block text-[14px]">{dry ? "Dry run is on" : "Live publishing is on"}</strong>
-              <span className="block text-[12px] text-dim">{dry ? "Publish Now only tests the flow. Nothing is posted." : "Publish Now will post to your real account."}</span>
-            </div>
-          </div>
-        </div>
-      </Reveal>
-
       {/* Media picker (multi-select) */}
       <Reveal>
         <div className="card">
@@ -293,7 +282,27 @@ export default function Post() {
           </div>
           <div className="flex flex-col md:flex-row gap-8 items-stretch">
             <PhoneSimulator />
-            <CaptionStudio onSchedule={trySchedule} />
+            <CaptionStudio
+              onSchedule={trySchedule}
+              footer={
+                <div className="flex flex-wrap items-center gap-2 -mt-1">
+                <StatusTip icon={<Instagram className="ic-sm w-4 h-4" />} bad={!igReady} label="instagram" title={igTitle} text={igText} />
+                <StatusTip icon={dry ? <CheckCircle2 className="ic-sm w-4 h-4" /> : <AlertTriangle className="ic-sm w-4 h-4" />} bad={!dry} label="publishing" title={liveTitle} text={liveText} />
+                {!igReady && <Link to="/settings" className="btn btn-sm btn-secondary">{sessionExpired ? "Reconnect" : "Connect"}</Link>}
+                {official && accountList.length > 0 && (
+                  <Select
+                    variant="pill"
+                    ariaLabel="Post to account"
+                    value={postOpts.account || accountList.find((a) => a.default)?.id || ""}
+                    onChange={(v) => setPostOpts({ account: v })}
+                    menuMinWidth={230}
+                    options={accountList.map((a) => ({ value: a.id, label: `@${a.username ?? a.id}`, hint: a.default ? "Active account" : "This post only" }))}
+                    renderValue={(o) => <span className="inline-flex items-center gap-2"><Send className="w-4 h-4" />Post to {o?.label}</span>}
+                  />
+                )}
+                </div>
+              }
+            />
           </div>
         </div>
       </Reveal>

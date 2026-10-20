@@ -10,7 +10,7 @@ import CaptionAiPicker from "../ui/CaptionAiPicker";
 import SuggestedSound from "./SuggestedSound";
 import Spinner from "../ui/Spinner";
 
-export default function CaptionStudio({ onSchedule }: { onSchedule: () => void }) {
+export default function CaptionStudio({ onSchedule, footer }: { onSchedule: () => void; footer?: React.ReactNode }) {
   const { media, prompt, caption, setCaption, setSong, postOpts } = useStudio();
   const { health, refreshGallery } = useApp();
   const toast = useToast();
@@ -163,6 +163,7 @@ export default function CaptionStudio({ onSchedule }: { onSchedule: () => void }
           <span>Schedule</span>
         </button>
       </div>
+      {footer}
     </div>
   );
 }
