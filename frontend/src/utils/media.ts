@@ -29,7 +29,7 @@ export function fileFromUrl(url: string): GalleryFile {
   const name = rel.split("/").pop() ?? rel;
   return {
     filename: name, path: rel, folder: rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "", url: clean, size_mb: 0,
-    is_video: /\.(mp4|mov|m4v|webm)$/i.test(name), created_at: "", timestamp: 0, posted: false, posted_at: null, uploaded: false,
+    is_video: /\.(mp4|mov|m4v|webm)$/i.test(name), created_at: "", timestamp: 0, posted: false, posted_at: null, uploaded: false, labels: [],
   };
 }
 

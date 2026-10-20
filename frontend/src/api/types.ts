@@ -268,6 +268,14 @@ export interface GalleryFile {
   posted_at: string | null;
   /** You uploaded this file yourself */
   uploaded: boolean;
+  /** Your own labels on this file */
+  labels: string[];
+}
+
+/** A label you made (shown as a colored chip; used to filter the Vault) */
+export interface VaultLabel {
+  name: string;
+  color: string;
 }
 
 export interface GalleryListing {
@@ -291,6 +299,8 @@ export interface GalleryListing {
   account_id?: string;
   linked?: boolean;
   default_folder?: string;
+  /** Every label you made */
+  labels?: VaultLabel[];
   /** Every account's folder; `linked` means a custom folder is linked to that account */
   account_folders?: Record<string, { folder: string; linked: boolean }>;
 }

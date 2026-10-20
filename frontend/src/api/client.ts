@@ -16,6 +16,7 @@ import type {
   PostRequest,
   PostResponse,
   QueueJob,
+  VaultLabel,
 } from "./types";
 
 export class ApiError extends Error {
@@ -136,6 +137,14 @@ export const api = {
   moveMedia: (paths: string[], to: string) =>
     request<{ moved: number; skipped: number }>("/api/gallery/move", json("POST", { paths, to })),
 
+  createLabel: (name: string, color?: string) =>
+    request<{ label: VaultLabel; labels: VaultLabel[] }>("/api/labels", json("POST", { name, color })),
+  deleteLabel: (name: string) => request<{ files: number; labels: VaultLabel[] }>("/api/labels/delete", json("POST", { name })),
+  /** Put labels on files and / or take them off */
+  labelFiles: (paths: string[], add: string[], remove: string[]) =>
+    request<{ changed: number }>("/api/gallery/labels", json("POST", { paths, add, remove })),
+  renameMedia: (path: string, name: string) =>
+    request<{ changed: boolean; filename: string; path: string; url: string }>("/api/gallery/rename", json("POST", { path, name })),
   /** Adds one picture or video to a Vault folder (`scope` is named like the Vault's views: "", an account id, "folder:<name>" or "unassigned") */
   uploadToVault: (file: File, scope: string, opts: { onProgress?: (loaded: number, total: number) => void; signal?: AbortSignal } = {}) =>
     new Promise<{ uploaded: { filename: string; path: string; url: string; size_mb: number; note?: string }[]; rejected: { name: string; reason: string }[] }>((resolve, reject) => {

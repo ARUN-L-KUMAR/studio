@@ -6,6 +6,8 @@ The Vault shows this as labels ("Posted", "Uploaded") and can filter by it, so y
 
 - Stored in vault_meta.json next to this file (private, in .gitignore), keyed by the file's path inside output/.
 - Posting records it automatically (Post page, queue jobs and daily automations); uploading records "uploaded".
+- Custom labels: names you make yourself ("Taniya", "Best of", "Ads"...), put on any files, used to filter the Vault.
+  The list of labels is kept under the "_labels" entry; each file entry holds its own "labels" list.
 - Moving or deleting a file in the app moves / removes its entry.
 - Files posted before this existed are filled in once from the finished jobs in jobs.yaml; anything else can be
   marked by hand in the Vault.
@@ -106,9 +108,9 @@ def set_posted(paths: Iterable, posted: bool):
 
 
 def info(path, data: Optional[dict] = None) -> dict:
-    """{"posted": bool, "posted_at": str|None, "uploaded": bool} for one file."""
+    """{"posted": bool, "posted_at": str|None, "uploaded": bool, "labels": [names]} for one file."""
     e = (data if data is not None else _load()).get(key_of(path) or "", {})
-    return {"posted": bool(e.get("posted")), "posted_at": e.get("posted_at"), "uploaded": bool(e.get("uploaded"))}
+    return {"posted": bool(e.get("posted")), "posted_at": e.get("posted_at"), "uploaded": bool(e.get("uploaded")), "labels": list(e.get("labels") or [])}
 
 
 def snapshot() -> dict:
@@ -127,6 +129,133 @@ def move(old_path, new_path):
         if a and b and a in d:
             d[b] = d.pop(a)
             _save(d)
+
+
+# ---------------------------------------------------------------------------------------------------- custom labels
+COLORS = ["emerald", "sky", "violet", "pink", "amber", "rose", "teal", "slate"]
+MAX_LABELS = 50
+MAX_NAME = 30
+
+
+def _name(raw) -> str:
+    n = " ".join(str(raw or "").split())                    # one space between words, no tabs or line breaks
+    if not n:
+        raise ValueError("Give the label a name.")
+    if len(n) > MAX_NAME:
+        raise ValueError(f"A label can have at most {MAX_NAME} characters.")
+    if not n.isprintable():
+        raise ValueError("A label can only use normal letters, numbers and symbols.")
+    return n
+
+
+def _registry(d: dict) -> dict:
+    reg = d.get("_labels")
+    if not isinstance(reg, dict):
+        reg = d["_labels"] = {}
+    return reg
+
+
+def label_list() -> List[dict]:
+    """Every label you made, A to Z: [{"name", "color"}]."""
+    reg = _load().get("_labels")
+    reg = reg if isinstance(reg, dict) else {}
+    return sorted(({"name": v["name"], "color": v.get("color", COLORS[0])} for v in reg.values()), key=lambda v: v["name"].casefold())
+
+
+def create_label(name: str, color: Optional[str] = None) -> dict:
+    n = _name(name)
+    with _lock:
+        d = _load()
+        reg = _registry(d)
+        if n.casefold() in reg:
+            raise ValueError(f"A label named “{reg[n.casefold()]['name']}” already exists.")
+        if len(reg) >= MAX_LABELS:
+            raise ValueError(f"You can have at most {MAX_LABELS} labels. Delete one you no longer use.")
+        reg[n.casefold()] = {"name": n, "color": color if color in COLORS else COLORS[len(reg) % len(COLORS)]}
+        _save(d)
+        return dict(reg[n.casefold()])
+
+
+def update_label(name: str, new_name: Optional[str] = None, color: Optional[str] = None) -> dict:
+    """Rename and / or recolor a label; the files that have it follow."""
+    with _lock:
+        d = _load()
+        reg = _registry(d)
+        cur = reg.get(str(name or "").casefold())
+        if not cur:
+            raise KeyError("That label does not exist.")
+        old = cur["name"]
+        if color is not None:
+            if color not in COLORS:
+                raise ValueError("Choose one of the offered colors.")
+            cur["color"] = color
+        if new_name is not None and _name(new_name) != old:
+            n = _name(new_name)
+            if n.casefold() != old.casefold() and n.casefold() in reg:
+                raise ValueError(f"A label named “{reg[n.casefold()]['name']}” already exists.")
+            del reg[old.casefold()]
+            cur["name"] = n
+            reg[n.casefold()] = cur
+            for k, e in d.items():
+                if k != "_labels" and isinstance(e, dict) and old in (e.get("labels") or []):
+                    e["labels"] = [n if x == old else x for x in e["labels"]]
+        _save(d)
+        return dict(cur)
+
+
+def delete_label(name: str) -> int:
+    """Delete a label everywhere. Returns how many files had it. The files themselves are not touched."""
+    with _lock:
+        d = _load()
+        reg = _registry(d)
+        cur = reg.pop(str(name or "").casefold(), None)
+        if not cur:
+            raise KeyError("That label does not exist.")
+        n = 0
+        for k in list(d):
+            e = d[k]
+            if k != "_labels" and isinstance(e, dict) and cur["name"] in (e.get("labels") or []):
+                e["labels"] = [x for x in e["labels"] if x != cur["name"]]
+                if not e["labels"]:
+                    e.pop("labels")
+                if not e:
+                    d.pop(k)
+                n += 1
+        _save(d)
+        return n
+
+
+def set_labels(paths: Iterable, add: Iterable[str] = (), remove: Iterable[str] = ()) -> int:
+    """Put labels on files and / or take them off. A label that does not exist yet is an error (create it first)."""
+    with _lock:
+        d = _load()
+        reg = _registry(d)
+        def canon(names):
+            out = []
+            for raw in names:
+                v = reg.get(str(raw or "").casefold())
+                if not v:
+                    raise KeyError(f"The label “{raw}” does not exist.")
+                out.append(v["name"])
+            return out
+        add_l, rem_l = canon(add), canon(remove)
+        changed = 0
+        for p in paths:
+            k = key_of(p)
+            if not k:
+                continue
+            e = d.setdefault(k, {})
+            before = list(e.get("labels") or [])
+            now = [x for x in before if x not in rem_l] + [x for x in add_l if x not in before and x not in rem_l]
+            if now:
+                e["labels"] = now
+            else:
+                e.pop("labels", None)
+            if not e:
+                d.pop(k, None)
+            changed += now != before
+        _save(d)
+        return changed
 
 
 def remove(path):

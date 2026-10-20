@@ -1,10 +1,11 @@
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { ChevronLeft, ChevronRight, Download, FolderInput, Play, Send, Trash2, Wand2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, FolderInput, Pencil, Play, Send, Tag, Trash2, Wand2, X } from "lucide-react";
 import clsx from "clsx";
-import type { GalleryFile } from "../../api/types";
+import type { GalleryFile, VaultLabel } from "../../api/types";
 import StatusBadges from "../vault/StatusBadges";
+import { LabelChips } from "../vault/LabelChips";
 
 interface Props {
   files: GalleryFile[];
@@ -16,11 +17,15 @@ interface Props {
   onMove?: (f: GalleryFile) => void;
   /** Use this file as the input of a new generation in the Studio */
   onUse?: (f: GalleryFile) => void;
+  onRename?: (f: GalleryFile) => void;
+  onLabel?: (f: GalleryFile) => void;
+  /** The labels you made, so a file's labels can be drawn in their colors */
+  labels?: VaultLabel[];
   onDelete: (f: GalleryFile) => void;
 }
 
 /** Full-screen viewer for the media vault: big picture or video, previous / next, thumbnails, quick actions. */
-export default function MediaViewer({ files, index, onIndex, onClose, onPost, onMove, onUse, onDelete }: Props) {
+export default function MediaViewer({ files, index, onIndex, onClose, onPost, onMove, onUse, onRename, onLabel, labels = [], onDelete }: Props) {
   const count = files.length;
   const open = index !== null && count > 0;
   const i = open ? Math.min(index as number, count - 1) : 0;
@@ -95,11 +100,14 @@ export default function MediaViewer({ files, index, onIndex, onClose, onPost, on
             <div className="min-w-0 flex-1">
               <strong className="flex items-center gap-2 text-[14px]"><span className="truncate" title={f.filename}>{f.filename}</span><StatusBadges file={f} /></strong>
               <span className="block text-[11px] text-white/55">{f.is_video ? "Reel" : "Image"} · {f.size_mb} MB · {f.created_at}</span>
+              <LabelChips names={f.labels ?? []} registry={labels} max={6} className="mt-1.5" />
             </div>
             <span className="text-[12px] font-semibold rounded-full bg-white/10 px-3 py-1">{i + 1} / {count}</span>
             <button className="btn btn-sm btn-glass" onClick={() => onPost(f)}><Send className="ic-sm w-4 h-4" /><span className="hidden sm:inline">Post</span></button>
             {onUse && <button className="btn btn-sm btn-glass" onClick={() => onUse(f)} aria-label="Use as input in the Studio" title="Use as input in the Studio"><Wand2 className="ic-sm w-4 h-4" /><span className="hidden sm:inline">Generate</span></button>}
-            {onMove && <button className="btn btn-sm btn-glass" onClick={() => onMove(f)} aria-label="Move to another folder"><FolderInput className="ic-sm w-4 h-4" /></button>}
+            {onRename && <button className="btn btn-sm btn-glass" onClick={() => onRename(f)} aria-label="Rename" title="Rename"><Pencil className="ic-sm w-4 h-4" /><span className="hidden sm:inline">Rename</span></button>}
+            {onLabel && <button className="btn btn-sm btn-glass" onClick={() => onLabel(f)} aria-label="Labels" title="Labels"><Tag className="ic-sm w-4 h-4" /><span className="hidden sm:inline">Label</span></button>}
+            {onMove && <button className="btn btn-sm btn-glass" onClick={() => onMove(f)} aria-label="Move to another folder" title="Move to another folder"><FolderInput className="ic-sm w-4 h-4" /><span className="hidden sm:inline">Move</span></button>}
             <a className="btn btn-sm btn-glass" href={f.url} download={f.filename} aria-label="Download"><Download className="ic-sm w-4 h-4" /></a>
             <button className="btn btn-sm btn-glass hover:!bg-danger" onClick={() => onDelete(f)} aria-label="Delete"><Trash2 className="ic-sm w-4 h-4" /></button>
             <button className="btn btn-sm btn-glass" onClick={onClose} aria-label="Close full view"><X className="ic-sm w-4 h-4" /></button>

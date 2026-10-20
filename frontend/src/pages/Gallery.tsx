@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import clsx from "clsx";
-import { Check, CheckCircle2, CheckSquare, Download, Unlink, FolderInput, FolderOpen, FolderPlus, Image as ImageIcon, KeyRound, Lock, LockOpen, Send, Trash2, Upload, UploadCloud, Video } from "lucide-react";
+import { Check, CheckCircle2, CheckSquare, Download, Unlink, FolderInput, FolderOpen, FolderPlus, Image as ImageIcon, KeyRound, Lock, LockOpen, Pencil, Send, Tag, Trash2, Upload, UploadCloud, Video } from "lucide-react";
 import { api } from "../api/client";
 import Segmented from "../components/ui/Segmented";
 import Select from "../components/ui/Select";
@@ -19,6 +19,9 @@ import InstagramPosts from "../components/studio/InstagramPosts";
 import MediaViewer from "../components/studio/MediaViewer";
 import { LockedCard, NewFolderModal, PinModal } from "../components/studio/FolderDialogs";
 import UploadModal from "../components/vault/UploadModal";
+import RenameModal from "../components/vault/RenameModal";
+import LabelModal from "../components/vault/LabelModal";
+import { LabelChips, LabelDot } from "../components/vault/LabelChips";
 import StatusBadges from "../components/vault/StatusBadges";
 
 type Filter = "all" | "video" | "image";
@@ -178,9 +181,27 @@ export default function Gallery() {
     () => ({ all: byType.length, unposted: byType.filter((f) => !f.posted).length, posted: byType.filter((f) => f.posted).length, uploaded: byType.filter((f) => f.uploaded).length }),
     [byType],
   );
+  // your own labels: "" = all, "__none" = files without a label, otherwise a label name
+  const labels = galleryMeta?.labels ?? [];
+  const [labelFilter, setLabelFilter] = useState("");
+  const [labelTarget, setLabelTarget] = useState<GalleryFile[] | null>(null);
+  useEffect(() => {
+    if (labelFilter && labelFilter !== "__none" && !labels.some((l) => l.name === labelFilter)) setLabelFilter("");      // the label was deleted
+  }, [labels, labelFilter]);
+  const labelCount = useMemo(() => {
+    const out: Record<string, number> = { __none: 0 };
+    for (const f of byType) {
+      if (!f.labels?.length) out.__none++;
+      for (const n of f.labels ?? []) out[n] = (out[n] ?? 0) + 1;
+    }
+    return out;
+  }, [byType]);
   const files = useMemo(
-    () => byType.filter((f) => (statusFilter === "unposted" ? !f.posted : statusFilter === "posted" ? f.posted : statusFilter === "uploaded" ? f.uploaded : true)),
-    [byType, statusFilter],
+    () =>
+      byType
+        .filter((f) => (statusFilter === "unposted" ? !f.posted : statusFilter === "posted" ? f.posted : statusFilter === "uploaded" ? f.uploaded : true))
+        .filter((f) => (labelFilter === "" ? true : labelFilter === "__none" ? !f.labels?.length : (f.labels ?? []).includes(labelFilter))),
+    [byType, statusFilter, labelFilter],
   );
 
   // multi-select
@@ -232,6 +253,12 @@ export default function Gallery() {
     setBusy(false);
     setPicked(new Set());
     reloadAll();
+  };
+
+  // rename one file from its card or from the full view
+  const [renaming, setRenaming] = useState<GalleryFile | null>(null);
+  const renamed = async () => {
+    await reloadAll();
   };
 
   const remove = async (f: GalleryFile) => {
@@ -453,6 +480,21 @@ export default function Gallery() {
         />
         <Select
           variant="box"
+          ariaLabel="Show by label"
+          value={labelFilter}
+          onChange={(v) => (v === "__manage" ? setLabelTarget([]) : setLabelFilter(v))}
+          alignRight
+          menuMinWidth={220}
+          options={[
+            { value: "", label: "All labels" },
+            ...labels.map((l) => ({ value: l.name, label: l.name, hint: `${labelCount[l.name] ?? 0}`, leading: <LabelDot color={l.color} /> })),
+            { value: "__none", label: "No label", hint: `${labelCount.__none ?? 0}` },
+            { value: "__manage", label: "Manage labels…", leading: <Tag className="w-3.5 h-3.5" /> },
+          ]}
+          renderValue={(o) => <span className="inline-flex items-center gap-1.5"><Tag className="ic-sm w-4 h-4" />{labelFilter ? o?.label ?? labelFilter : "Labels"}</span>}
+        />
+        <Select
+          variant="box"
           ariaLabel="Show by status"
           value={statusFilter}
           onChange={(v) => setStatusFilter(v as StatusFilter)}
@@ -482,6 +524,9 @@ export default function Gallery() {
           </button>
           <button className="btn btn-sm btn-soft" disabled={!picked.size || busy} onClick={() => markMany(pickedFiles, false)} title="Remove the Posted label from the selected files">
             <span>Not posted</span>
+          </button>
+          <button className="btn btn-sm btn-soft" disabled={!picked.size || busy} onClick={() => setLabelTarget(pickedFiles)} title="Put labels on the selected files">
+            <Tag className="ic-sm w-4 h-4" /><span>Label</span>
           </button>
           {accounts.length > 0 && (
             <button className="btn btn-sm btn-soft" disabled={!picked.size || busy} onClick={() => startMove(pickedFiles)}>
@@ -570,14 +615,17 @@ export default function Gallery() {
                     <img src={f.url} alt={f.filename} loading="lazy" className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
                   )}
                   <div className={clsx("absolute inset-x-0 bottom-0 flex gap-2 p-3 bg-gradient-to-t from-neutral-950/85 to-transparent translate-y-full group-hover:translate-y-0 focus-within:translate-y-0 transition-transform duration-300", selecting && "hidden")}>
-                    <button className="btn btn-sm btn-glass flex-1" onClick={() => open(f)}><Send className="ic-sm w-4 h-4" /><span>Post</span></button>
-                    {accounts.length > 0 && <button className="btn btn-sm btn-glass" onClick={() => startMove([f])} aria-label="Move to another folder"><FolderInput className="ic-sm w-4 h-4" /></button>}
-                    <a className="btn btn-sm btn-glass" href={f.url} download={f.filename} aria-label="Download"><Download className="ic-sm w-4 h-4" /></a>
-                    <button className="btn btn-sm btn-glass hover:!bg-danger" onClick={() => remove(f)} aria-label="Delete"><Trash2 className="ic-sm w-4 h-4" /></button>
+                    <button className="btn btn-sm btn-glass flex-1 min-w-0 !px-0" onClick={() => open(f)} aria-label="Post" title="Post"><Send className="ic-sm w-4 h-4" /></button>
+                    <button className="btn btn-sm btn-glass flex-1 min-w-0 !px-0" onClick={() => setRenaming(f)} aria-label="Rename" title="Rename"><Pencil className="ic-sm w-4 h-4" /></button>
+                    <button className="btn btn-sm btn-glass flex-1 min-w-0 !px-0" onClick={() => setLabelTarget([f])} aria-label="Labels" title="Labels"><Tag className="ic-sm w-4 h-4" /></button>
+                    {accounts.length > 0 && <button className="btn btn-sm btn-glass flex-1 min-w-0 !px-0" onClick={() => startMove([f])} aria-label="Move to another folder" title="Move to another folder"><FolderInput className="ic-sm w-4 h-4" /></button>}
+                    <a className="btn btn-sm btn-glass flex-1 min-w-0 !px-0" href={f.url} download={f.filename} aria-label="Download" title="Download"><Download className="ic-sm w-4 h-4" /></a>
+                    <button className="btn btn-sm btn-glass flex-1 min-w-0 !px-0 hover:!bg-danger" onClick={() => remove(f)} aria-label="Delete" title="Delete"><Trash2 className="ic-sm w-4 h-4" /></button>
                   </div>
                 </div>
                 <div className="p-4">
                   <strong className="block text-[13px] truncate" title={f.filename}>{f.filename}</strong>
+                  <LabelChips names={f.labels ?? []} registry={labels} className="mt-2" />
                   <div className="flex justify-between text-[11px] text-dim mt-1">
                     <span>{f.size_mb} MB</span>
                     <span>{f.created_at}</span>
@@ -597,9 +645,15 @@ export default function Gallery() {
         onClose={closeViewer}
         onPost={open}
         onMove={accounts.length > 0 ? (f) => startMove([f]) : undefined}
+        onRename={setRenaming}
+        onLabel={(f) => setLabelTarget([f])}
+        labels={labels}
         onUse={useAsInput}
         onDelete={remove}
       />
+
+      <LabelModal files={labelTarget} labels={labels} onClose={() => setLabelTarget(null)} onChanged={() => reloadAll()} />
+      <RenameModal file={renaming} onClose={() => setRenaming(null)} onRenamed={renamed} />
 
       <UploadModal
         open={uploadOpen}

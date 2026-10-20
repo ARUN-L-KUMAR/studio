@@ -1252,7 +1252,7 @@ def get_gallery(request: Request, scope: str = ""):
     unassigned = _gallery_files(OUTPUT_DIR)
     if not instagram_api.accounts():
         return {"files": unassigned, "count": len(unassigned), "scope": "all", "account": None, "unassigned_count": 0}
-    meta = {"unassigned_count": len(unassigned), "folders": _unlinked_folders(), "locks": _lock_map(request), "account_folders": _account_folders()}
+    meta = {"unassigned_count": len(unassigned), "folders": _unlinked_folders(), "locks": _lock_map(request), "account_folders": _account_folders(), "labels": vault_meta.label_list()}
     if scope == "unassigned":
         return {"files": unassigned, "count": len(unassigned), "scope": "unassigned", "account": None, **meta}
     if scope.startswith("folder:"):
@@ -1391,6 +1391,61 @@ def mark_gallery_files(payload: MarkRequest, request: Request):
     vault_meta.set_posted(todo, payload.posted)
     return {"status": "success", "changed": len(todo)}
 
+class LabelCreate(BaseModel):
+    name: str
+    color: Optional[str] = None
+
+class LabelUpdate(BaseModel):
+    name: str                   # the label to change
+    new_name: Optional[str] = None
+    color: Optional[str] = None
+
+class LabelName(BaseModel):
+    name: str
+
+class LabelAssign(BaseModel):
+    paths: List[str]            # files as listed by /api/gallery
+    add: List[str] = []
+    remove: List[str] = []
+
+def _label_call(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=e.args[0])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/labels")
+def list_labels():
+    return {"labels": vault_meta.label_list()}
+
+@app.post("/api/labels")
+def create_label(payload: LabelCreate):
+    """Make a custom label (a name and a color) that can be put on any Vault file."""
+    return {"status": "success", "label": _label_call(vault_meta.create_label, payload.name, payload.color), "labels": vault_meta.label_list()}
+
+@app.post("/api/labels/update")
+def update_label(payload: LabelUpdate):
+    return {"status": "success", "label": _label_call(vault_meta.update_label, payload.name, payload.new_name, payload.color), "labels": vault_meta.label_list()}
+
+@app.post("/api/labels/delete")
+def delete_label(payload: LabelName):
+    """Delete a label everywhere. The files that had it are not touched."""
+    n = _label_call(vault_meta.delete_label, payload.name)
+    return {"status": "success", "files": n, "labels": vault_meta.label_list()}
+
+@app.post("/api/gallery/labels")
+def label_gallery_files(payload: LabelAssign, request: Request):
+    """Put labels on files, take labels off, or both. Files in a folder with a PIN need that folder to be unlocked."""
+    todo = []
+    for rel in payload.paths:
+        folders.require_open(request, folders.folder_of(rel))
+        f = _inside(OUTPUT_DIR, rel)
+        if f and f.is_file() and f.suffix.lower() in GALLERY_EXTS:
+            todo.append(f)
+    return {"status": "success", "changed": _label_call(vault_meta.set_labels, todo, payload.add, payload.remove)}
+
 class MoveRequest(BaseModel):
     paths: List[str]            # file paths as listed by /api/gallery ("redmedia.inn/x.png" or "x.png")
     to: str                     # an account id, "folder:<name>" (a custom folder), or "unassigned"
@@ -1432,28 +1487,67 @@ def move_gallery_files(payload: MoveRequest, request: Request):
         shutil.move(str(src), str(target))
         vault_meta.move(src, target)                  # its Posted / Uploaded labels go with it
         moved[str(src.resolve())] = str(target.resolve())
-    if moved:                                         # keep scheduled jobs pointing at the right file
-        with _job_lock:
-            jobs = load_jobs()
-            changed = False
-            def fix(value):
-                nonlocal changed
-                if not value:
-                    return value
-                real = P._real_path(value)
-                new = moved.get(str(Path(real).resolve())) if real else None
-                if new:
-                    changed = True
-                    return out_url(new) if str(value).startswith("/output/") else new
-                return value
-            for j in jobs:
-                if j.get("media"):
-                    j["media"] = fix(j["media"])
-                if j.get("media_paths"):
-                    j["media_paths"] = [fix(x) for x in j["media_paths"]]
-            if changed:
-                save_jobs(jobs)
+    _repoint_jobs(moved)
     return {"status": "success", "moved": len(moved), "skipped": skipped}
+
+def _repoint_jobs(moved: dict):
+    """After files moved or were renamed ({old absolute path: new absolute path}): keep queued jobs pointing at them."""
+    if not moved:
+        return
+    with _job_lock:
+        jobs = load_jobs()
+        changed = False
+        def fix(value):
+            nonlocal changed
+            if not value:
+                return value
+            real = P._real_path(value)
+            new = moved.get(str(Path(real).resolve())) if real else None
+            if new:
+                changed = True
+                return out_url(new) if str(value).startswith("/output/") else new
+            return value
+        for j in jobs:
+            if j.get("media"):
+                j["media"] = fix(j["media"])
+            if j.get("media_paths"):
+                j["media_paths"] = [fix(x) for x in j["media_paths"]]
+        if changed:
+            save_jobs(jobs)
+
+class RenameRequest(BaseModel):
+    path: str                   # the file as listed by /api/gallery ("redmedia.inn/x.png")
+    name: str                   # the new name, with or without the extension (the extension itself cannot change)
+
+@app.post("/api/gallery/rename")
+def rename_gallery_file(payload: RenameRequest, request: Request):
+    """Rename a Vault file. Its extension stays. Its Posted / Uploaded labels follow it and queued jobs that use it are
+    updated. A name that is already taken in that folder is refused (nothing is overwritten)."""
+    folders.require_open(request, folders.folder_of(payload.path))
+    src = _inside(OUTPUT_DIR, payload.path)
+    if not src or not src.is_file() or src.suffix.lower() not in GALLERY_EXTS:
+        raise HTTPException(status_code=404, detail="File not found")
+    ext = src.suffix
+    typed = payload.name.strip()
+    if typed.lower().endswith(ext.lower()):
+        typed = typed[: -len(ext)]                      # "holiday.png" and "holiday" mean the same
+    elif Path(typed).suffix.lower() in GALLERY_EXTS:
+        raise HTTPException(status_code=400, detail=f"The file type cannot be changed: it stays {ext}.")
+    stem = re.sub(r"[^\w.\- ]+", "_", typed).strip(". _")[:100]
+    if not stem:
+        raise HTTPException(status_code=400, detail="Give the file a name.")
+    if stem.casefold() in folders.RESERVED:
+        stem = "_" + stem
+    target = src.with_name(stem + ext)
+    if target.name == src.name:
+        return {"status": "success", "changed": False, "filename": src.name, "path": payload.path, "url": "/output/" + payload.path}
+    if target.exists() and target.name.casefold() != src.name.casefold():
+        raise HTTPException(status_code=409, detail=f"A file named “{target.name}” already exists in this folder.")
+    os.replace(src, target)
+    vault_meta.move(src, target)                        # its labels go with it
+    _repoint_jobs({str(src.resolve()): str(target.resolve())})
+    rel = target.resolve().relative_to(OUTPUT_DIR.resolve()).as_posix()
+    return {"status": "success", "changed": True, "filename": target.name, "path": rel, "url": "/output/" + rel}
 
 @app.delete("/api/gallery/{filename:path}")
 def delete_gallery_item(filename: str, request: Request):
