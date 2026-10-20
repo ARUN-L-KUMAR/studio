@@ -8,9 +8,11 @@ import Automations from "./pages/Automations";
 import Gallery from "./pages/Gallery";
 import Settings from "./pages/Settings";
 import { StudioProvider } from "./context/StudioContext";
+import { UploadProvider } from "./context/UploadContext";
 
 export default function App() {
   return (
+    <UploadProvider>
     <StudioProvider>
       <Routes>
         <Route element={<AppShell />}>
@@ -25,5 +27,6 @@ export default function App() {
         </Route>
       </Routes>
     </StudioProvider>
+    </UploadProvider>
   );
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import clsx from "clsx";
@@ -106,6 +106,16 @@ export default function Gallery() {
     await refreshGallery();
     await loadOther();
   };
+  // a background upload (see the tray) just finished: show the new files in whatever folder is open
+  const reloadRef = useRef(reloadAll);
+  reloadRef.current = reloadAll;
+  useEffect(() => {
+    const h = () => {
+      reloadRef.current().catch(() => {});
+    };
+    window.addEventListener("vault-uploaded", h);
+    return () => window.removeEventListener("vault-uploaded", h);
+  }, []);
 
   const lockNow = async () => {
     if (!curFolder) return;
@@ -597,7 +607,6 @@ export default function Gallery() {
         initialFiles={uploadFiles}
         scope={uploadScope}
         destinations={allDestinations}
-        onUploaded={() => reloadAll()}
       />
 
       <Modal

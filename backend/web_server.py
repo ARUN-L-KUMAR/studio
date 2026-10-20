@@ -1323,6 +1323,8 @@ def _check_upload(tmp: Path, ext: str) -> str:
             raise ValueError("it is not a real MP4 / MOV video")
     return ext
 
+_upload_name_lock = threading.Lock()
+
 @app.post("/api/gallery/upload")
 def upload_to_vault(request: Request, files: List[UploadFile] = File(...), scope: str = Form("")):
     """Add pictures (PNG, JPG, WEBP) or videos (MP4, MOV) to a Vault folder. Each file is checked: allowed type, size
@@ -1354,10 +1356,11 @@ def upload_to_vault(request: Request, files: List[UploadFile] = File(...), scope
                 raise ValueError("it is empty")
             real_ext = _check_upload(tmp, ext)
             stem, final, n = _safe_stem(original), None, 0
-            while final is None or final.exists():
-                final = target / (f"{stem}{real_ext}" if n == 0 else f"{stem}_{n}{real_ext}")
-                n += 1
-            os.replace(tmp, final)
+            with _upload_name_lock:                    # files are uploaded several at a time: choose the name and save under one lock
+                while final is None or final.exists():
+                    final = target / (f"{stem}{real_ext}" if n == 0 else f"{stem}_{n}{real_ext}")
+                    n += 1
+                os.replace(tmp, final)
             vault_meta.mark_uploaded([final])           # the Vault labels it "Uploaded"
             rel = final.resolve().relative_to(OUTPUT_DIR.resolve()).as_posix()
             entry = {"filename": final.name, "path": rel, "url": "/output/" + rel, "size_mb": round(size / (1024 * 1024), 2)}

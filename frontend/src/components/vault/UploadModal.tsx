@@ -1,11 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
-import { AlertTriangle, CheckCircle2, Film, Loader2, Upload, UploadCloud, X } from "lucide-react";
+import { AlertTriangle, Film, Upload, UploadCloud, X } from "lucide-react";
 import clsx from "clsx";
-import { api } from "../../api/client";
 import Modal from "../ui/Modal";
 import Select, { type SelectOption } from "../ui/Select";
-import Spinner from "../ui/Spinner";
-import { useToast } from "../../context/ToastContext";
+import { useUploads } from "../../context/UploadContext";
 
 const IMAGE_EXT = [".png", ".jpg", ".jpeg", ".webp"];
 const VIDEO_EXT = [".mp4", ".mov"];
@@ -14,7 +12,7 @@ const MAX_VIDEO_MB = 300;
 const MAX_FILES = 200;
 const ACCEPT = "image/png,image/jpeg,image/webp,video/mp4,video/quicktime,.png,.jpg,.jpeg,.webp,.mp4,.mov";
 
-type Status = "ready" | "uploading" | "done" | "error";
+type Status = "ready" | "error";
 interface Item {
   id: string;
   file: File;
@@ -47,19 +45,15 @@ interface Props {
   scope: string;
   /** The folders that can be chosen (locked ones come disabled) */
   destinations: SelectOption[];
-  /** Called after at least one file was saved, so the Vault can reload */
-  onUploaded: (count: number) => void;
 }
 
 /** Add pictures (and videos) to a Vault folder: choose or drop many files, see each one's result. */
-export default function UploadModal({ open, onClose, initialFiles, scope, destinations, onUploaded }: Props) {
-  const toast = useToast();
+export default function UploadModal({ open, onClose, initialFiles, scope, destinations }: Props) {
   const input = useRef<HTMLInputElement>(null);
-  const cancel = useRef(false);
+  const { enqueue } = useUploads();
   const [items, setItems] = useState<Item[]>([]);
   const [dest, setDest] = useState(scope);
   const [over, setOver] = useState(false);
-  const [busy, setBusy] = useState(false);
 
   const add = (list: File[]) => {
     setItems((cur) => {
@@ -79,7 +73,6 @@ export default function UploadModal({ open, onClose, initialFiles, scope, destin
   // a fresh start every time the dialog opens
   useEffect(() => {
     if (!open) return;
-    cancel.current = false;
     setDest(scope);
     setItems([]);
     add(initialFiles);
@@ -96,12 +89,9 @@ export default function UploadModal({ open, onClose, initialFiles, scope, destin
   }, [open]);
 
   const ready = items.filter((i) => i.status === "ready");
-  const done = items.filter((i) => i.status === "done").length;
   const failed = items.filter((i) => i.status === "error").length;
-  const total = ready.length + done;
   const destLabel = useMemo(() => destinations.find((d) => d.value === dest)?.label ?? "this folder", [destinations, dest]);
 
-  const patch = (id: string, p: Partial<Item>) => setItems((cur) => cur.map((i) => (i.id === id ? { ...i, ...p } : i)));
   const remove = (id: string) =>
     setItems((cur) => {
       const gone = cur.find((i) => i.id === id);
@@ -109,37 +99,12 @@ export default function UploadModal({ open, onClose, initialFiles, scope, destin
       return cur.filter((i) => i.id !== id);
     });
 
-  const start = async () => {
-    cancel.current = false;
-    setBusy(true);
-    const alreadyBad = items.filter((i) => i.status === "error").length;     // files the page itself refused
-    let saved = 0, refused = 0;
-    for (const it of items.filter((i) => i.status === "ready")) {
-      if (cancel.current) break;
-      patch(it.id, { status: "uploading" });
-      try {
-        const r = await api.uploadToVault(it.file, dest);
-        if (r.uploaded.length) {
-          saved++;
-          patch(it.id, { status: "done", message: r.uploaded[0].note });
-        } else {
-          refused++;
-          patch(it.id, { status: "error", message: r.rejected[0]?.reason ?? "The server did not accept this file." });
-        }
-      } catch (e) {
-        refused++;
-        patch(it.id, { status: "error", message: (e as Error).message });
-        if (/locked|PIN/i.test((e as Error).message)) break;          // every other file would be refused the same way
-      }
-    }
-    setBusy(false);
-    if (saved) onUploaded(saved);
-    if (saved && !refused && !alreadyBad && !cancel.current) {
-      toast(`${saved} file${saved === 1 ? "" : "s"} added to ${destLabel}`, "success");
-      onClose();
-    } else if (saved) {
-      toast(`${saved} added${refused + alreadyBad ? `, ${refused + alreadyBad} could not be added` : ""}`, "info");
-    }
+  // the files are sent in the background (see UploadContext): the dialog closes at once and a tray shows the progress
+  const start = () => {
+    const files = ready.map((i) => i.file);
+    if (!files.length) return;
+    enqueue(files, dest, destLabel);
+    onClose();
   };
 
   const onPick = (e: ChangeEvent<HTMLInputElement>) => {
@@ -152,24 +117,19 @@ export default function UploadModal({ open, onClose, initialFiles, scope, destin
     add(Array.from(e.dataTransfer.files));
   };
 
-  const close = () => {
-    if (busy) cancel.current = true;
-    onClose();
-  };
-
   return (
-    <Modal open={open} onClose={close} icon={UploadCloud} title="Upload to the Vault" subtitle="Add pictures or videos you already have, then use them for posts and automations.">
+    <Modal open={open} onClose={onClose} icon={UploadCloud} title="Upload to the Vault" subtitle="Add pictures or videos you already have, then use them for posts and automations.">
       <div className="field">
         <span className="label">Add them to</span>
-        <Select ariaLabel="Destination folder" value={dest} onChange={setDest} options={destinations} disabled={busy} />
+        <Select ariaLabel="Destination folder" value={dest} onChange={setDest} options={destinations} />
       </div>
 
       <div
         role="button"
         tabIndex={0}
         aria-label="Choose files to upload"
-        onClick={() => !busy && input.current?.click()}
-        onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && !busy && input.current?.click()}
+        onClick={() => input.current?.click()}
+        onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && input.current?.click()}
         onDragOver={(e) => {
           e.preventDefault();
           setOver(true);
@@ -179,7 +139,6 @@ export default function UploadModal({ open, onClose, initialFiles, scope, destin
         className={clsx(
           "grid place-items-center text-center rounded-md border-2 border-dashed px-4 py-7 cursor-pointer transition",
           over ? "border-primary-500 bg-primary-600/10" : "border-line bg-surface-2/50 hover:border-primary-500/60 hover:bg-surface-2",
-          busy && "opacity-60 pointer-events-none",
         )}
       >
         <input ref={input} type="file" multiple hidden accept={ACCEPT} onChange={onPick} />
@@ -197,12 +156,10 @@ export default function UploadModal({ open, onClose, initialFiles, scope, destin
               </span>
               <div className="min-w-0 flex-1">
                 <strong className="block text-[13.5px] truncate" title={i.file.name}>{i.file.name}</strong>
-                <span className={clsx("block text-[12.5px]", i.status === "error" ? "text-danger" : "text-dim")}>{i.status === "error" || (i.status === "done" && i.message) ? i.message : `${mb(i.file.size)} MB`}</span>
+                <span className={clsx("block text-[12.5px]", i.status === "error" ? "text-danger" : "text-dim")}>{i.status === "error" ? i.message : `${mb(i.file.size)} MB`}</span>
               </div>
-              {i.status === "uploading" && <Loader2 className="w-4 h-4 animate-spin text-primary-400 shrink-0" aria-label="Uploading" />}
-              {i.status === "done" && <CheckCircle2 className="w-4 h-4 text-success shrink-0" aria-label="Uploaded" />}
               {i.status === "error" && <AlertTriangle className="w-4 h-4 text-danger shrink-0" aria-label="Not uploaded" />}
-              {(i.status === "ready" || i.status === "error") && !busy && (
+              {(
                 <button className="p-1.5 rounded-md text-muted hover:text-fg hover:bg-surface-2" onClick={() => remove(i.id)} aria-label={`Remove ${i.file.name}`}><X className="w-4 h-4" /></button>
               )}
             </li>
@@ -212,12 +169,12 @@ export default function UploadModal({ open, onClose, initialFiles, scope, destin
 
       <div className="flex flex-wrap items-center justify-between gap-3 mt-5">
         <span className="text-[13px] text-muted" role="status">
-          {busy ? `Uploading ${done + 1} of ${total}…` : items.length === 0 ? "No files chosen yet." : `${ready.length} ready${failed ? `, ${failed} can't be uploaded` : ""}${done ? `, ${done} added` : ""}`}
+          {items.length === 0 ? "No files chosen yet." : `${ready.length} ready${failed ? `, ${failed} can't be uploaded` : ""}. Uploading continues in the background.`}
         </span>
         <div className="flex gap-3">
-          <button className="btn btn-ghost" onClick={close}>{busy ? "Stop" : done ? "Close" : "Cancel"}</button>
-          <button className="btn btn-primary" onClick={start} disabled={busy || ready.length === 0}>
-            {busy ? <Spinner /> : <Upload className="ic" />}<span>{busy ? "Uploading…" : `Upload ${ready.length || ""} file${ready.length === 1 ? "" : "s"}`.replace("  ", " ")}</span>
+          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" onClick={start} disabled={ready.length === 0}>
+            <Upload className="ic" /><span>{`Upload ${ready.length || ""} file${ready.length === 1 ? "" : "s"}`.replace("  ", " ")}</span>
           </button>
         </div>
       </div>

@@ -3,6 +3,7 @@ import { Outlet, useLocation } from "react-router-dom";
 import Backdrop from "./Backdrop";
 import Dock from "./Dock";
 import Topbar from "./Topbar";
+import UploadTray from "../vault/UploadTray";
 
 export default function AppShell() {
   const { pathname } = useLocation();
@@ -22,6 +23,7 @@ export default function AppShell() {
         </div>
       </main>
       <Dock />
+      <UploadTray />
     </div>
   );
 }

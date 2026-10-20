@@ -137,12 +137,34 @@ export const api = {
     request<{ moved: number; skipped: number }>("/api/gallery/move", json("POST", { paths, to })),
 
   /** Adds one picture or video to a Vault folder (`scope` is named like the Vault's views: "", an account id, "folder:<name>" or "unassigned") */
-  uploadToVault: (file: File, scope: string) => {
-    const form = new FormData();
-    form.append("files", file);
-    form.append("scope", scope);
-    return request<{ uploaded: { filename: string; path: string; url: string; size_mb: number; note?: string }[]; rejected: { name: string; reason: string }[] }>("/api/gallery/upload", { method: "POST", body: form });
-  },
+  uploadToVault: (file: File, scope: string, opts: { onProgress?: (loaded: number, total: number) => void; signal?: AbortSignal } = {}) =>
+    new Promise<{ uploaded: { filename: string; path: string; url: string; size_mb: number; note?: string }[]; rejected: { name: string; reason: string }[] }>((resolve, reject) => {
+      const cancelled = () => Object.assign(new Error("Upload stopped"), { name: "AbortError" });
+      if (opts.signal?.aborted) return reject(cancelled());
+      const form = new FormData();
+      form.append("files", file);
+      form.append("scope", scope);
+      // XMLHttpRequest (not fetch) because it reports how many bytes have been sent
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/gallery/upload");
+      xhr.upload.onprogress = (e) => e.lengthComputable && opts.onProgress?.(e.loaded, e.total);
+      xhr.onload = () => {
+        let body: unknown = null;
+        try {
+          body = JSON.parse(xhr.responseText);
+        } catch {
+          /* empty body */
+        }
+        if (xhr.status === 401 && (body as { auth?: boolean } | null)?.auth) window.dispatchEvent(new Event("auth-required"));
+        if (xhr.status >= 200 && xhr.status < 300) return resolve(body as never);
+        const b = body as { detail?: string; message?: string } | null;
+        reject(new ApiError(b?.detail || b?.message || `Request failed (${xhr.status})`, xhr.status, body));
+      };
+      xhr.onerror = () => reject(new ApiError("The connection was lost while uploading. Check your internet and try again.", 0, null));
+      xhr.onabort = () => reject(cancelled());
+      opts.signal?.addEventListener("abort", () => xhr.abort(), { once: true });
+      xhr.send(form);
+    }),
   createFolder: (name: string, pin = "") => request<{ name: string; locked: boolean }>("/api/folders", json("POST", { name, pin })),
   deleteFolder: (name: string) => request<{ status: string }>(`/api/folders/${encodeURIComponent(name)}`, { method: "DELETE" }),
   unlockFolder: (name: string, pin: string) =>
