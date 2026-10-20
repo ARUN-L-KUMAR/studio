@@ -167,6 +167,32 @@ def account_folder(account=None) -> str:
     return folder
 
 
+def default_folder_name(acc: dict) -> str:
+    """The folder name an account gets by default: its username, made safe for a folder name."""
+    return re.sub(r"[^A-Za-z0-9._-]", "_", acc.get("username") or str(acc["id"])).strip(". ") or str(acc["id"])
+
+
+def folder_is_default(acc: dict, folder: str) -> bool:
+    """True when `folder` is the account's own folder: its username, or the username plus the short suffix that is
+    added when two accounts would otherwise share a name."""
+    f, d = (folder or "").casefold(), default_folder_name(acc).casefold()
+    return f == d or bool(re.fullmatch(re.escape(d) + r"_\w{1,4}", f))
+
+
+def unset_folder(account: str) -> str:
+    """Unlink: the account goes back to its own folder (named after its username). The folder it was linked to is not
+    touched, so its files stay where they are and it becomes a plain custom folder again. Returns the account's folder."""
+    acc = get_account(account)
+    if folder_is_default(acc, account_folder(acc["id"])):
+        raise InstagramApiError("This account already uses its own folder, so there is nothing to unlink.")
+    d = _load()
+    for a in d["accounts"]:
+        if str(a["id"]) == str(acc["id"]):
+            a.pop("folder", None)
+    _save(d)
+    return account_folder(acc["id"])               # chosen again from the username
+
+
 def folder_owner(folder: str):
     """Which account owns this folder name (or None)."""
     for a in accounts():

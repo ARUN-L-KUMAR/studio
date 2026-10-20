@@ -19,6 +19,10 @@ import yaml
 from dotenv import load_dotenv
 from gradio_client import Client, handle_file
 
+import publish_log
+import vault_meta
+import usage_stats
+
 load_dotenv()
 # huggingface_hub uses short default time-outs (10s) when looking up a Space; give slow connections more room
 os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "30")
@@ -265,6 +269,7 @@ def generate(task, prompt, image=None, video=None, override=None, face=None, sta
     0 turns it off), which noticeably shortens upload and processing time."""
     max_px = int((CFG.get("generation") or {}).get("max_input_px", 1536) or 0)
     temps = []
+    started = time.time()
     try:
         if (image or face) and max_px:
             if status_cb:
@@ -272,7 +277,12 @@ def generate(task, prompt, image=None, video=None, override=None, face=None, sta
             image, t1 = _shrink_image(image, max_px)
             face, t2 = _shrink_image(face, max_px)
             temps = [t for t in (t1, t2) if t]
-        return _generate(task, prompt, image, video, override, face, status_cb, out_dir)
+        result = _generate(task, prompt, image, video, override, face, status_cb, out_dir)
+        try:
+            usage_stats.record_run(task, time.time() - started)     # real timings for the dashboard's estimates
+        except Exception:
+            pass
+        return result
     finally:
         for t in temps:
             try:
@@ -611,6 +621,8 @@ def run_job(job, dry_run=None):
         res = publish_media(media, caption, is_video, media_paths=multi, fmt=job.get("format"), account=job.get("account"))
         posted = True
         post_url = (res or {}).get("url")
+        publish_log.record("Carousel" if len(multi) > 1 else "Reel" if is_video else "Photo", (res or {}).get("account"), post_url)
+        vault_meta.mark_posted([_real_path(p) for p in multi] if multi else [media], (res or {}).get("account"), post_url)   # Vault label "Posted"
 
     return {"media": media, "caption": caption, "song": song, "posted": posted, "url": post_url}
 

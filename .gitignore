@@ -4,6 +4,10 @@
 !.env.example
 auth.json
 folder_locks.json
+publish_log.json
+usage_stats.json
+automations.json
+vault_meta.json
 ig_accounts.json
 ig_session.json
 ig_login_state.json

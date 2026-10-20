@@ -4,6 +4,7 @@ import Dashboard from "./pages/Dashboard";
 import Studio from "./pages/Studio";
 import Post from "./pages/Post";
 import Queue from "./pages/Queue";
+import Automations from "./pages/Automations";
 import Gallery from "./pages/Gallery";
 import Settings from "./pages/Settings";
 import { StudioProvider } from "./context/StudioContext";
@@ -17,6 +18,7 @@ export default function App() {
           <Route path="studio" element={<Studio />} />
           <Route path="post" element={<Post />} />
           <Route path="queue" element={<Queue />} />
+          <Route path="automations" element={<Automations />} />
           <Route path="gallery" element={<Gallery />} />
           <Route path="settings" element={<Settings />} />
           <Route path="*" element={<Dashboard />} />

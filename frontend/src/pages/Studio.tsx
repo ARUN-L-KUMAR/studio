@@ -146,7 +146,7 @@ export default function Studio() {
           </div>
         )}
 
-        <button className="btn btn-primary btn-lg btn-shine w-full" onClick={s.generate} disabled={s.generating}>
+        <button className="btn btn-primary btn-lg btn-shine w-full" onClick={() => s.generate()} disabled={s.generating}>
           {s.generating ? <Spinner /> : <Zap className="ic" />}
           <span>{s.generating ? "Generating" : "Generate Media"}</span>
         </button>

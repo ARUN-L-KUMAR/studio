@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, Film, Image as ImageIcon, Instagram, Smartphone, Sliders, Video, X, Zap } from "lucide-react";
+import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, Film, FolderOpen, Image as ImageIcon, Instagram, Smartphone, Sliders, Video, X, Zap } from "lucide-react";
 import clsx from "clsx";
 import PhoneSimulator from "../components/studio/PhoneSimulator";
 import CaptionStudio from "../components/studio/CaptionStudio";
@@ -11,14 +11,16 @@ import Select from "../components/ui/Select";
 import { useApp } from "../context/AppContext";
 import { useStudio, type PostOptions as Opts } from "../context/StudioContext";
 import { useToast } from "../context/ToastContext";
-import type { GalleryFile } from "../api/types";
+import { api } from "../api/client";
+import type { GalleryFile, GalleryListing } from "../api/types";
+import StatusBadges from "../components/vault/StatusBadges";
 import { fileToResult } from "../utils/media";
 
 const MAX_ITEMS = 10;
 
 export default function Post() {
   const { media, showMedia, setCaption, setSong, postOpts, setPostOpts } = useStudio();
-  const { gallery, galleryAccount, galleryMeta, config, health } = useApp();
+  const { gallery, galleryMeta, config, health, unlinkedFolders, unassignedCount } = useApp();
   const toast = useToast();
   const navigate = useNavigate();
   const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -29,6 +31,41 @@ export default function Post() {
   const accountList = health?.keys.instagram.official_accounts ?? [];
   const igReady = official || (!!health?.keys.instagram.configured && !sessionExpired);
   const files = postOpts.files;
+
+  // Which Vault folder the pictures below come from: "" = the active account's folder, an account id, "folder:<name>" or "unassigned"
+  const activeId = (accountList.find((a) => a.default) ?? accountList[0])?.id ?? "";
+  const [pickScope, setPickScope] = useState("");
+  const [other, setOther] = useState<GalleryListing | null>(null);
+  useEffect(() => {
+    setPickScope("");                               // switching the active account starts from its folder again
+  }, [activeId]);
+  useEffect(() => {
+    if (!pickScope) return setOther(null);
+    let live = true;
+    api.gallery(pickScope).then((l) => live && setOther(l)).catch(() => live && setOther(null));
+    return () => {
+      live = false;
+    };
+  }, [pickScope, gallery]);
+  const folderFiles = pickScope ? (other && other.scope === pickScope ? other.files : []) : gallery;
+  const folderLocked = pickScope ? !!other?.locked : !!galleryMeta?.locked;
+  const locks = galleryMeta?.locks ?? {};
+  const accFolder = (id: string) => (galleryMeta?.account_folders?.[id]?.folder ? `folder ${galleryMeta.account_folders[id].folder}` : undefined);
+  const folderOptions = [
+    ...accountList.filter((a) => a.id === activeId).map((a) => ({ value: "", label: `@${a.username ?? a.id}`, hint: ["Active account", accFolder(a.id)].filter(Boolean).join(" · "), disabled: locks[a.id] === "locked" })),
+    ...accountList.filter((a) => a.id !== activeId).map((a) => ({ value: a.id, label: `@${a.username ?? a.id}`, hint: locks[a.id] === "locked" ? "Locked: unlock it in the Vault" : accFolder(a.id), disabled: locks[a.id] === "locked" })),
+    ...(unassignedCount ? [{ value: "unassigned", label: "Unassigned", hint: `${unassignedCount} older file${unassignedCount === 1 ? "" : "s"}` }] : []),
+    ...unlinkedFolders.map((f) => ({
+      value: `folder:${f.name}`, label: f.name, disabled: locks[`folder:${f.name}`] === "locked",
+      hint: locks[`folder:${f.name}`] === "locked" ? "Locked: unlock it in the Vault" : `Custom folder · ${f.count} file${f.count === 1 ? "" : "s"}`,
+    })),
+  ];
+  const folderLabel = folderOptions.find((o) => o.value === pickScope)?.label ?? "this folder";
+
+  // pictures that are selected but live in another folder than the one being listed (they stay selected when you switch folders)
+  const outside = files.filter((f) => !folderFiles.some((g) => g.url === f.url));
+  const strip = [...outside, ...folderFiles];
+  const outsideNote = outside.length ? ` ${outside.length === 1 ? "1 is" : `${outside.length} are`} from another folder, shown first.` : "";
 
   // Arriving from the Studio / Vault / Queue with one item: start with it selected
   useEffect(() => {
@@ -133,11 +170,23 @@ export default function Post() {
               <h3 className="card-title"><Film className="ic" />Choose media</h3>
               <p className="card-sub">
                 {files.length > 1
-                  ? `${files.length} items selected. They are posted in this order.`
-                  : `Tap items to select. Choose several to make one carousel or slideshow.${galleryAccount ? ` Showing files of @${galleryAccount}.` : ""}`}
+                  ? `${files.length} items selected. They are posted in this order.${outsideNote}`
+                  : `Tap items to select. Choose several to make one carousel or slideshow.${outsideNote}`}
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {accountList.length > 0 && (
+                <Select
+                  variant="pill"
+                  ariaLabel="Folder to pick pictures from"
+                  value={pickScope}
+                  onChange={setPickScope}
+                  options={folderOptions}
+                  alignRight
+                  menuMinWidth={250}
+                  renderValue={() => <span className="inline-flex items-center gap-2"><FolderOpen className="w-4 h-4" />{folderLabel}</span>}
+                />
+              )}
               {files.length > 0 && (
                 <button className="btn btn-sm btn-ghost" onClick={() => setPostOpts({ files: [] })}>Clear</button>
               )}
@@ -147,22 +196,26 @@ export default function Post() {
             </div>
           </div>
 
-          {gallery.length === 0 ? (
-            galleryMeta?.locked ? (
+          {strip.length === 0 ? (
+            folderLocked ? (
               <p className="text-[13px] text-muted py-6 text-center">
-                The folder of {galleryAccount ? `@${galleryAccount}` : "this account"} is locked. <button className="underline text-primary-400" onClick={() => navigate("/gallery")}>Open the Vault</button> and enter its PIN to use its files.
+                This folder is locked. <button className="underline text-primary-400" onClick={() => navigate("/gallery")}>Open the Vault</button> and enter its PIN to use its files.
               </p>
             ) : (
-              <p className="text-[13px] text-muted py-6 text-center">The vault is empty. Generate your first image or Reel in the Studio.</p>
+              <p className="text-[13px] text-muted py-6 text-center">
+                {pickScope ? `There are no pictures in ${folderLabel} yet. Upload some in the Vault, or choose another folder.` : "The vault is empty. Generate your first image or Reel in the Studio."}
+              </p>
             )
           ) : (
-            <div className="flex gap-3 overflow-x-auto pb-2 no-scrollbar -mx-1 px-1">
-              {gallery.map((f) => {
+            // extra room around the row, so a chosen picture's glow and slight enlargement are not cut off at the edges
+            <div className="flex gap-3 overflow-x-auto no-scrollbar -mx-3 px-3 -mt-2 pt-3 pb-3" aria-label="Pictures to choose from">
+              {strip.map((f, i) => {
                 const order = files.findIndex((x) => x.url === f.url);
                 const active = order > -1;
                 return (
+                  <Fragment key={f.path}>
+                    {i === outside.length && outside.length > 0 && folderFiles.length > 0 && <div aria-hidden className="w-px self-stretch bg-line mx-1 shrink-0" />}
                   <button
-                    key={f.path}
                     onClick={() => toggle(f)}
                     title={f.filename}
                     aria-pressed={active}
@@ -176,6 +229,10 @@ export default function Post() {
                     ) : (
                       <img src={f.url} alt="" loading="lazy" className="w-full h-full object-cover" />
                     )}
+                    {/* Posted / Uploaded icons, top-right (below the selection number when the picture is chosen) */}
+                    <div className={clsx("absolute right-1.5 flex flex-col items-end gap-1", active ? "top-8" : "top-1.5")}>
+                      <StatusBadges file={f} size="sm" />
+                    </div>
                     <span className="absolute top-1.5 left-1.5 grid place-items-center w-5 h-5 rounded-full bg-neutral-950/70 text-white">
                       {f.is_video ? <Video className="w-3 h-3" /> : <ImageIcon className="w-3 h-3" />}
                     </span>
@@ -185,6 +242,7 @@ export default function Post() {
                       </span>
                     )}
                   </button>
+                  </Fragment>
                 );
               })}
             </div>

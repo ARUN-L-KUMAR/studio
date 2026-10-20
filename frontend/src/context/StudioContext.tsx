@@ -50,7 +50,8 @@ interface StudioState {
   progress: number;
   step: string;
   showProgress: boolean;
-  generate: () => Promise<void>;
+  /** With `over`, starts a text-only job without touching the Studio form (used by Quick Create on the dashboard) */
+  generate: (over?: { task: TaskKey; prompt: string; space?: string }) => Promise<void>;
 
   media: GenerationResult | null;
   caption: string;
@@ -159,24 +160,32 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     return stopPoll;
   }, [startPoll]);
 
-  const generate = useCallback(async () => {
-    const text = prompt.trim();
+  const generate = useCallback(async (over?: { task: TaskKey; prompt: string; space?: string }) => {
+    const text = (over?.prompt ?? prompt).trim();
+    const t = over?.task ?? task;
     if (!text) return toast("Please enter a prompt or idea", "error");
-    if (["image_to_video", "image_to_image"].includes(task) && !uploads.image)
-      return toast("Please upload an input image for this task", "error");
-    if (task === "video_to_video" && !uploads.video) return toast("Please upload an input video for this task", "error");
-    if (task === "face_swap" && (!uploads.face || !uploads.image))
-      return toast("Face Swap requires both a reference face and a target scene photo", "error");
+    if (!over) {
+      if (["image_to_video", "image_to_image"].includes(t) && !uploads.image)
+        return toast("Please upload an input image for this task", "error");
+      if (t === "video_to_video" && !uploads.video) return toast("Please upload an input video for this task", "error");
+      if (t === "face_swap" && (!uploads.face || !uploads.image))
+        return toast("Face Swap requires both a reference face and a target scene photo", "error");
+    }
 
     const form = new FormData();
-    form.append("task", task);
+    form.append("task", t);
     form.append("prompt", text);
-    if (uploads.image) form.append("image", uploads.image);
-    if (uploads.video) form.append("video", uploads.video);
-    if (uploads.face) form.append("face", uploads.face);
-    if (space.trim()) form.append("space_id", space.trim());
-    if (apiName.trim()) form.append("api_name", apiName.trim());
-    if (paramsJson.trim()) form.append("params_json", paramsJson.trim());
+    if (over) {
+      // the Studio form's endpoint, parameters and uploads belong to the Studio's own pipeline, so only the model is sent
+      if (over.space?.trim()) form.append("space_id", over.space.trim());
+    } else {
+      if (uploads.image) form.append("image", uploads.image);
+      if (uploads.video) form.append("video", uploads.video);
+      if (uploads.face) form.append("face", uploads.face);
+      if (space.trim()) form.append("space_id", space.trim());
+      if (apiName.trim()) form.append("api_name", apiName.trim());
+      if (paramsJson.trim()) form.append("params_json", paramsJson.trim());
+    }
 
     setGenerating(true);
     setShowProgress(true);

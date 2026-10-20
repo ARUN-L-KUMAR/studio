@@ -11,6 +11,7 @@ const TITLES: Record<string, string> = {
   "/studio": "Studio",
   "/post": "Post to Instagram",
   "/queue": "Automation Queue",
+  "/automations": "Daily Automations",
   "/gallery": "Media Vault",
   "/settings": "Settings",
 };
@@ -36,7 +37,7 @@ export default function Topbar() {
         </Link>
 
         <div className="flex-1 min-w-0 flex items-center justify-center">
-          <span className="glass border border-line rounded-full px-4 py-1.5 text-[12px] font-semibold tracking-wide text-muted truncate">
+          <span className="glass hidden sm:block border border-line rounded-full px-4 py-1.5 text-[12px] font-semibold tracking-wide text-muted truncate">
             <span className="text-primary-400">/</span> {TITLES[pathname] ?? "InstaStudio"}
           </span>
         </div>

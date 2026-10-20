@@ -26,11 +26,16 @@ tasks:
       width: 1024
       height: 1024
   image_to_image:
-    space: your-username/your-image-edit-space
-    api_name: /predict
+    space: aet256/Qwen-Image-Edit-Rapid-AIO-Loras-Experimental
+    api_name: /infer
     params:
-      image: '{image}'
+      input_image_1: '{image}'
+      input_image_2: '{image}'
       prompt: '{prompt}'
+      lora_adapter: None
+      randomize_seed: true,
+      steps: 4,
+      guidance_scale: 1.0
   face_swap:
     space: hugging-apps/bfs-best-face-swap
     api_name: /face_swap
@@ -65,7 +70,7 @@ instagram:
   post_type: REELS
   dry_run: false
 schedule:
-  run_in_server: true   # run queued jobs while the web server is open (use false if you run 'python batch.py daemon')
+  run_in_server: true
   daily_times:
   - 09:00
   - '19:00'

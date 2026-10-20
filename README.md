@@ -33,7 +33,7 @@ Studio/
 └── .gitignore
 ```
 
-Files that hold secrets or your data (`.env`, `auth.json`, `folder_locks.json`, `ig_*.json`, `jobs.yaml`, `hf_quota.json`, `output/`, `input/`, `music/`) are listed in `.gitignore` and are never committed.
+Files that hold secrets or your data (`.env`, `auth.json`, `folder_locks.json`, `publish_log.json`, `usage_stats.json`, `automations.json`, `vault_meta.json`, `ig_*.json`, `jobs.yaml`, `hf_quota.json`, `output/`, `input/`, `music/`) are listed in `.gitignore` and are never committed.
 
 ## Set up
 
@@ -73,6 +73,16 @@ Open <http://localhost:8000>. For development with hot reload run `npm run dev` 
 
 Songs on posts use a phone-style login (username and password, or a session ID) in addition to the official API.
 
+## Daily automations
+
+Open **Daily Automations** (a button on the Queue page, or `/automations`). An automation is a saved rule: a pipeline, one or more times of day, optional weekdays and a start / end date, the account to post to, and where each post's content comes from:
+
+- **Rotating list:** you write the prompts; it uses them in order and starts over after the last.
+- **AI writes ideas:** the caption AI invents a new prompt each time from a theme you give it.
+- Pipelines that start from a photo or video (Image to Video, Image to Image, Video to Video, Face Swap) take the files from a **Vault folder**, one after another. Face Swap also uses one fixed reference face.
+
+When a time comes, the server's scheduler adds an ordinary job to the Queue, and the normal flow takes over (generate, caption, post, retry). Dry run applies as usual. Missed times are still made if less than 2 hours late; new or edited automations start from that moment. Automations only run while the server is on and `schedule.run_in_server` is true in `config.yaml`. Rules are stored in `backend/automations.json`.
+
 ## Deploying to your own server
 
 1. Copy the project to the server and do the **Set up** steps above (or copy `frontend/dist` from your PC and skip Node).
@@ -80,7 +90,7 @@ Songs on posts use a phone-style login (username and password, or a session ID) 
 3. Set the login password **before** anyone else can reach it: `python backend/set_password.py`. Until a password exists, the app only opens on the server itself.
 4. Start it with `python backend/run_web.py` and keep it running (a service, `tmux`, or similar). Scheduled posts run inside this process, so the server must stay on.
 5. Use HTTPS (a Cloudflare Tunnel or Caddy in front). Without it the password travels unencrypted. If the site uses its own domain, add it to `APP_ALLOWED_ORIGINS`.
-6. Back up `backend/output`, `backend/input`, `backend/music`, `backend/.env`, `backend/auth.json`, `backend/folder_locks.json`, `backend/ig_*.json` and `backend/jobs.yaml`.
+6. Back up `backend/output`, `backend/input`, `backend/music`, `backend/.env`, `backend/auth.json`, `backend/folder_locks.json`, `backend/publish_log.json`, `backend/usage_stats.json`, `backend/automations.json`, `backend/vault_meta.json`, `backend/ig_*.json` and `backend/jobs.yaml`.
 
 ## Notes
 

@@ -15,7 +15,7 @@ export default function AppShell() {
     <div className="min-h-screen">
       <Backdrop />
       <Topbar />
-      <main className="w-full max-w-[1360px] mx-auto px-4 sm:px-8 pt-2 pb-44">
+      <main className="w-full max-w-[1360px] mx-auto px-4 sm:px-8 pt-2 pb-32 sm:pb-44">
         {/* Pure CSS enter animation: always ends visible, even if JS animation frames are throttled */}
         <div key={pathname} className="animate-page-in">
           <Outlet />

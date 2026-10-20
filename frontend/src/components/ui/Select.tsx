@@ -22,7 +22,8 @@ interface Props {
   ariaLabel: string;
   disabled?: boolean;
   /** "field" matches the text inputs, "pill" is the rounded glass style used in the top bar */
-  variant?: "field" | "pill";
+  /** "box" looks like the Segmented switch: a bordered box with the chosen value as the highlighted segment */
+  variant?: "field" | "pill" | "box";
   className?: string;
   /** Open the list aligned to the right edge of the button instead of the left */
   alignRight?: boolean;
@@ -185,16 +186,28 @@ export default function Select({
           "group flex items-center gap-2 text-left transition duration-150 disabled:opacity-60 disabled:cursor-not-allowed",
           variant === "field"
             ? "input w-full !py-2.5 pr-3 cursor-pointer"
+            : variant === "box"
+            ? "rounded-md bg-surface-2 border border-line p-1 text-[13px] font-semibold hover:border-primary-500/60"
             : "glass rounded-full border border-line pl-2 pr-3 py-1.5 text-[12px] font-semibold hover:border-primary-500/60",
           open && (variant === "field" ? "!border-primary-500 !shadow-[0_0_0_3px_rgb(var(--primary-500)/.18)]" : "!border-primary-500/70"),
           className,
         )}
       >
-        {selected?.leading}
-        <span className={clsx("min-w-0 flex-1 truncate", !selected && "text-dim")}>
-          {renderValue ? renderValue(selected) : selected?.label ?? placeholder}
-        </span>
-        <ChevronDown className={clsx("w-4 h-4 shrink-0 text-muted transition-transform duration-200", open && "rotate-180 text-primary-400")} />
+        {variant === "box" ? (
+          <span className="flex items-center gap-2 px-3.5 py-1.5 rounded-sm bg-brand text-neutral-950 shadow-glow">
+            {selected?.leading}
+            <span className="min-w-0 flex-1 truncate">{renderValue ? renderValue(selected) : selected?.label ?? placeholder}</span>
+            <ChevronDown className={clsx("w-4 h-4 shrink-0 transition-transform duration-200", open && "rotate-180")} />
+          </span>
+        ) : (
+          <>
+            {selected?.leading}
+            <span className={clsx("min-w-0 flex-1 truncate", !selected && "text-dim")}>
+              {renderValue ? renderValue(selected) : selected?.label ?? placeholder}
+            </span>
+            <ChevronDown className={clsx("w-4 h-4 shrink-0 text-muted transition-transform duration-200", open && "rotate-180 text-primary-400")} />
+          </>
+        )}
       </button>
 
       {createPortal(

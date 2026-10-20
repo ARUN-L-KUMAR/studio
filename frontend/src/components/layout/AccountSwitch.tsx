@@ -60,7 +60,7 @@ export default function AccountSwitch() {
       onChange={change}
       alignRight
       menuMinWidth={230}
-      className="max-w-[180px] sm:max-w-[220px]"
+      className="max-w-[128px] sm:max-w-[220px]"
       options={accounts.map((a) => ({
         value: a.id,
         label: `@${name(a)}`,

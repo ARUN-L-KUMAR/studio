@@ -83,6 +83,24 @@ export interface Health {
   };
   available_music_tracks: number;
   available_tasks: string[];
+  /** Real posts recorded by the server (dry runs are not counted); `days` = last 7 days, oldest first */
+  published?: { total: number; today: number; days: number[]; recent?: { at: string; kind: string; account: string | null; url: string | null }[] };
+  /** Service health worked out by the server */
+  services?: ServiceStatus[];
+  /** Real timings of finished runs, per pipeline: typical (median) seconds, number of runs kept, and when it last ran */
+  usage?: Record<string, { median_seconds: number; runs: number; last_used: string | null }>;
+  active_generation?: { is_generating: boolean; progress: number; current_step: string };
+}
+
+export type ServiceState = "connected" | "degraded" | "disconnected" | "auth_required";
+
+export interface ServiceStatus {
+  id: string;
+  label: string;
+  state: ServiceState;
+  detail: string;
+  /** Page that fixes it (null when connected) */
+  action: string | null;
 }
 
 export interface TaskConfig {
@@ -105,7 +123,7 @@ export interface AppConfig {
   };
   music: { folder?: string; enabled?: boolean; volume?: number };
   instagram: { post_type?: string; dry_run: boolean };
-  schedule: { daily_times?: string[] };
+  schedule: { daily_times?: string[]; run_in_server?: boolean };
 }
 
 export interface QueueJob {
@@ -123,6 +141,75 @@ export interface QueueJob {
   account_name?: string | null;
   caption?: string;
   error?: string;
+  created_at?: string;
+  finished_at?: string;
+  posted?: boolean;
+  /** Files attached to a job that starts from a photo, video or face (null when the file is not in the input folder) */
+  input_urls?: Partial<Record<"image" | "video" | "face", string | null>>;
+  /** Set when a daily automation made this job */
+  automation?: string;
+  automation_name?: string;
+}
+
+/** A daily automation: make a pipeline's output at set times and post it. */
+export interface Automation {
+  id: string;
+  name: string;
+  enabled: boolean;
+  pipeline: string;
+  /** Account id; "" = whichever account is active when it posts */
+  account: string;
+  times: string[];
+  /** 0 = Monday ... 6 = Sunday; empty = every day */
+  days: number[];
+  start_date: string | null;
+  end_date: string | null;
+  prompt_mode: "list" | "ai";
+  prompts: string[];
+  theme: string;
+  /** "own" automations: the folder that is posted from */
+  input_folder: string;
+  /** "generate": make something new with the pipeline; "own": post the files of the folder as they are */
+  source: "generate" | "own";
+  /** "own" only: start over when every file has been posted */
+  loop: boolean;
+  /** "own" only: files in the folder that have not been posted yet */
+  unused_count?: number;
+  /** Pipelines that start from files: where each input ("image", "face", "video") comes from */
+  inputs: Record<string, { mode: "file" | "folder"; folder: string; file_name: string; file_ok: boolean; count: number | null }>;
+  /** Upcoming run times, "YYYY-MM-DD HH:MM", for the next week */
+  next_runs: string[];
+  /** "own" automations: photos and videos in the folder */
+  file_count: number | null;
+  state: { runs: number; last_run_at: string | null; last_status: "queued" | "error" | "waiting" | null; last_error: string | null; next_prompt: number; run_now: boolean };
+}
+
+export interface AutomationInput {
+  name: string;
+  enabled: boolean;
+  pipeline: string;
+  account: string;
+  times: string[];
+  days: number[];
+  start_date: string | null;
+  end_date: string | null;
+  prompt_mode: "list" | "ai";
+  prompts: string[];
+  theme: string;
+  /** "own" automations: the folder to post from */
+  input_folder: string;
+  /** Pipelines that start from files: each input is one uploaded file (empty `file` keeps the saved one) or a Vault folder */
+  inputs: Record<string, { mode: "file" | "folder"; folder: string; file: string }>;
+  source: "generate" | "own";
+  loop: boolean;
+}
+
+export interface AutomationFolder {
+  name: string;
+  account: string | null;
+  locked: boolean;
+  images: number;
+  videos: number;
 }
 
 export interface IgAccount {
@@ -176,6 +263,11 @@ export interface GalleryFile {
   is_video: boolean;
   created_at: string;
   timestamp: number;
+  /** It was posted to Instagram (and when) */
+  posted: boolean;
+  posted_at: string | null;
+  /** You uploaded this file yourself */
+  uploaded: boolean;
 }
 
 export interface GalleryListing {
@@ -195,6 +287,12 @@ export interface GalleryListing {
   protected?: boolean;
   /** Every folder with a PIN, keyed by account id or "folder:<name>" */
   locks?: Record<string, "locked" | "open">;
+  /** When an account's folder is shown: which account, whether a custom folder is linked to it, and its own default name */
+  account_id?: string;
+  linked?: boolean;
+  default_folder?: string;
+  /** Every account's folder; `linked` means a custom folder is linked to that account */
+  account_folders?: Record<string, { folder: string; linked: boolean }>;
 }
 
 export interface FolderInfo {

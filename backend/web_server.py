@@ -10,6 +10,7 @@ import glob
 import json
 import time
 import shutil
+import uuid
 import asyncio
 from datetime import datetime
 from pathlib import Path
@@ -27,6 +28,10 @@ import pipeline as P
 import instagram_api
 import auth
 import folders
+import automations
+import publish_log
+import vault_meta
+import usage_stats
 from urllib.parse import unquote
 import captioner
 from batch import load_jobs, save_jobs, execute
@@ -40,6 +45,7 @@ MUSIC_DIR = BASE_DIR / "music"
 
 OUTPUT_DIR.mkdir(exist_ok=True)
 folders.configure(OUTPUT_DIR)
+vault_meta.configure(OUTPUT_DIR)
 INPUT_DIR.mkdir(exist_ok=True)
 MUSIC_DIR.mkdir(exist_ok=True)
 
@@ -64,6 +70,7 @@ app.middleware("http")(folders.guard)
 app.middleware("http")(auth.guard)
 app.include_router(auth.router)
 app.include_router(folders.router)
+app.include_router(automations.router)
 
 # In-memory status for currently active background generation
 active_generation = {
@@ -133,6 +140,14 @@ class BatchAddRequest(BaseModel):
     task: str
     prompts: List[str]
     post_times: Optional[List[str]] = None
+    # for pipelines that start from a file: the same file is used for every prompt (uploaded with /api/upload first)
+    image: Optional[str] = None
+    video: Optional[str] = None
+    face: Optional[str] = None
+
+# which files each pipeline needs besides the prompt
+TASK_INPUTS = {"image_to_video": ["image"], "image_to_image": ["image"], "video_to_video": ["video"], "face_swap": ["image", "face"]}
+INPUT_LABELS = {"image": "a photo", "video": "a video", "face": "a reference face photo"}
 
 class ConfigUpdateRequest(BaseModel):
     caption: Optional[Dict[str, Any]] = None
@@ -249,8 +264,72 @@ def check_health():
         },
         "available_music_tracks": len(music_tracks),
         "available_tasks": list(cfg.get("tasks", {}).keys()),
-        "active_generation": active_generation
+        "active_generation": active_generation,
+        "published": publish_log.summary(),
+        "usage": usage_stats.summary(),
+        "services": _service_states(cfg, hf_tokens, valid_accounts, cloudinary_ok, direct_ok, ig_token_ok),
     }
+
+def _service_states(cfg, hf_tokens, valid_accounts, cloudinary_ok, direct_ok, ig_token_ok):
+    """What the dashboard's Service Health shows, worked out from what the server knows right now (no network calls):
+    connected / degraded / disconnected / auth_required."""
+    def svc(id_, label, state, detail, action="/settings"):
+        return {"id": id_, "label": label, "state": state, "detail": detail, "action": None if state == "connected" else action}
+
+    out = []
+    # Hugging Face (image and video generation)
+    total = len(hf_tokens)
+    if total == 0:
+        out.append(svc("huggingface", "Hugging Face", "disconnected", "No token added. Generation can't run."))
+    elif valid_accounts == 0:
+        out.append(svc("huggingface", "Hugging Face", "auth_required", "Hugging Face rejected every token. Add a new one."))
+    else:
+        quota = P.quota_status() or []
+        waiting = [q for q in quota if q.get("wait_seconds", 0) > 0]
+        if valid_accounts is not None and valid_accounts < total:
+            out.append(svc("huggingface", "Hugging Face", "degraded", f"{total - valid_accounts} of {total} tokens were rejected."))
+        elif quota and len(waiting) >= total:
+            mins = max(1, min(q["wait_seconds"] for q in waiting) // 60)
+            out.append(svc("huggingface", "Hugging Face", "degraded", f"Free GPU quota is used up on every account. Back in about {mins} min."))
+        else:
+            out.append(svc("huggingface", "Hugging Face", "connected", f"{total} account{'s' if total != 1 else ''}" + (" with failover" if total > 1 else "")))
+
+    # Caption AI
+    providers = captioner.catalog()
+    chosen = cfg.get("caption", {}).get("provider", "gemini")
+    ready = [p for p in providers if p.get("configured")]
+    chosen_ok = any(p["id"] == chosen for p in ready)
+    label = next((p.get("label") for p in providers if p["id"] == chosen), chosen)
+    if not ready:
+        out.append(svc("caption", "Caption AI", "disconnected", "No caption provider has a key."))
+    elif not chosen_ok:
+        out.append(svc("caption", "Caption AI", "degraded", f"{label} has no key. Captions use another provider instead."))
+    else:
+        out.append(svc("caption", "Caption AI", "connected", f"{label} · {len(ready)} provider{'s' if len(ready) != 1 else ''} ready"))
+
+    # Instagram
+    accounts = instagram_api.public_accounts()
+    expired = [a for a in accounts if a.get("days_left") == 0]
+    session_expired = bool(sys.modules.get("instagram_direct") and sys.modules["instagram_direct"].SESSION_STATE["expired"])
+    names = ", ".join("@" + (a.get("username") or a["id"]) for a in expired[:3])
+    if not accounts and not direct_ok and not ig_token_ok:
+        out.append(svc("instagram", "Instagram", "disconnected", "No account connected."))
+    elif session_expired and not accounts:
+        out.append(svc("instagram", "Instagram", "auth_required", "The saved Instagram login expired. Sign in again."))
+    elif accounts and len(expired) == len(accounts):
+        out.append(svc("instagram", "Instagram", "auth_required", f"Token expired for {names}. Paste a new token."))
+    elif expired or session_expired:
+        out.append(svc("instagram", "Instagram", "degraded", (f"Token expired for {names}." if expired else "The saved phone login expired, so songs can't be added.")))
+    elif accounts and not cloudinary_ok:
+        out.append(svc("instagram", "Instagram", "degraded", "Connected, but the Cloudinary link is missing, so photos and Reels can't be uploaded."))
+    else:
+        n = len(accounts)
+        out.append(svc("instagram", "Instagram", "connected", f"{n} account{'s' if n != 1 else ''} connected" if n else "Connected"))
+
+    # Cloudinary (hosts media for the official Instagram API)
+    out.append(svc("cloudinary", "Cloudinary", "connected" if cloudinary_ok else "disconnected",
+                   "Hosting media for posts" if cloudinary_ok else "Not set. Needed to post with the Instagram API."))
+    return out
 
 class IgCredentialsRequest(BaseModel):
     username: Optional[str] = None
@@ -734,6 +813,9 @@ def post_content(payload: DirectPostRequest):
         elif payload.track_id:
             route = " (songs post to the browser-login account)"
         what = "carousel" if album else ("slideshow Reel" if multi else ("Reel" if post_is_video else "photo"))
+        if posted:
+            vault_meta.mark_posted([*paths, post_path], (res or {}).get("account") if use_official else None, public_url)   # Vault label "Posted"
+            publish_log.record(what[:1].upper() + what[1:], (res or {}).get("account") if use_official else None, public_url)
         song = " with an Instagram song" if payload.track_id else (" with your audio" if local_audio else "")
         return {
             "status": "success",
@@ -808,6 +890,15 @@ def set_ig_account_folder(account_id: str, payload: FolderRequest):
     folder = _official_call(instagram_api.set_folder, account_id, name)
     return {"status": "success", "folder": folder}
 
+@app.delete("/api/instagram/accounts/{account_id}/folder")
+def unlink_ig_account_folder(account_id: str):
+    """Undo "link folder": the account returns to its own folder; the folder it was linked to becomes a custom folder again."""
+    import instagram_api
+    acc = _official_call(instagram_api.get_account, account_id)
+    previous = _official_call(instagram_api.account_folder, acc["id"])
+    folder = _official_call(instagram_api.unset_folder, account_id)
+    return {"status": "success", "previous": previous, "folder": folder}
+
 @app.post("/api/instagram/accounts/{account_id}/refresh")
 def refresh_ig_account(account_id: str):
     import instagram_api
@@ -854,13 +945,15 @@ def _run_due_jobs():
             save_jobs(jobs)
 
 _scheduler_state = {"slot": None}
+automations.configure(_job_lock, OUTPUT_DIR, lambda ref: resolve_media(ref), lambda: get_config())
 
 def _scheduler_loop():
     while True:
         time.sleep(30)
         try:
             if (get_config().get("schedule") or {}).get("run_in_server", True):
-                _run_due_jobs()
+                automations.tick()            # daily automations add their jobs to the queue first...
+                _run_due_jobs()               # ...then every due job runs
         except Exception as e:
             print(f"[scheduler] error: {str(e)[:160]}")
 
@@ -876,6 +969,10 @@ def start_scheduler():
             changed = True
     if changed:
         _save(jobs)
+    try:
+        vault_meta.backfill_from_jobs(load_jobs())      # files that earlier jobs already posted get the "Posted" label (once)
+    except Exception as e:
+        print(f"[vault] could not read the earlier posts: {str(e)[:100]}")
     threading.Thread(target=_scheduler_loop, daemon=True).start()
 
 # --- Music: Instagram song search and your own audio files ---
@@ -933,6 +1030,15 @@ def get_queue():
         if j.get("media_paths"):
             j["media_urls"] = [out_url(p) for p in j["media_paths"]]
             j["media_url"] = j["media_urls"][0]
+        inputs = {}
+        for kind in ("image", "video", "face"):      # files attached to a job that starts from a photo / video
+            if j.get(kind):
+                try:
+                    inputs[kind] = "/input/" + Path(j[kind]).relative_to(INPUT_DIR.resolve()).as_posix()
+                except ValueError:
+                    inputs[kind] = None
+        if inputs:
+            j["input_urls"] = inputs
     return {"jobs": jobs, "total": len(jobs)}
 
 @app.post("/api/queue")
@@ -969,6 +1075,18 @@ def add_to_queue(job: QueueJobItem):
 
 @app.post("/api/queue/batch")
 def add_batch_to_queue(payload: BatchAddRequest):
+    if payload.task not in (get_config().get("tasks") or {}):
+        raise HTTPException(status_code=400, detail=f"Unknown pipeline: {payload.task}")
+    # files for pipelines that need them: check every one is present and really exists in the input / output folder
+    files = {}
+    for kind in TASK_INPUTS.get(payload.task, []):
+        ref = getattr(payload, kind)
+        if not ref:
+            raise HTTPException(status_code=400, detail=f"{payload.task.replace('_', ' ').title()} needs {INPUT_LABELS[kind]}. Attach it first.")
+        path = resolve_media(ref)
+        if not path or not Path(path).is_file():
+            raise HTTPException(status_code=400, detail=f"The attached {kind} could not be found. Upload it again.")
+        files[kind] = str(Path(path).resolve())
     jobs = load_jobs()
     added = 0
     now = datetime.now()
@@ -983,7 +1101,8 @@ def add_batch_to_queue(payload: BatchAddRequest):
             "task": payload.task,
             "prompt": p.strip(),
             "status": "pending",
-            "created_at": now.strftime("%Y-%m-%d %H:%M:%S")
+            "created_at": now.strftime("%Y-%m-%d %H:%M:%S"),
+            **files,
         }
         if post_time:
             job["post_at"] = post_time
@@ -1002,21 +1121,51 @@ def delete_queue_job(job_id: int):
         return {"status": "success", "deleted": deleted}
     raise HTTPException(status_code=404, detail="Job not found")
 
-@app.post("/api/queue/run")
-def run_queue_jobs(limit: Optional[int] = 1):
-    jobs = load_jobs()
-    pending_jobs = [j for j in jobs if j.get("status", "pending") == "pending"]
-    todo = pending_jobs[:limit] if limit else pending_jobs
-    executed = []
+@app.post("/api/queue/{job_id}/retry")
+def retry_queue_job(job_id: int):
+    """Put a failed job back in the queue. The scheduler picks it up within a minute."""
+    with _job_lock:
+        jobs = load_jobs()
+        if not 0 <= job_id < len(jobs):
+            raise HTTPException(status_code=404, detail="Job not found")
+        job = jobs[job_id]
+        if job.get("status") != "failed":
+            raise HTTPException(status_code=400, detail="Only failed jobs can be retried.")
+        job["status"] = "pending"
+        job.pop("error", None)
+        job["post_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+        save_jobs(jobs)
+    return {"status": "success"}
 
-    for job in todo:
-        try:
-            execute(job)
-            executed.append(job)
+@app.post("/api/queue/run")
+def run_queue_jobs(limit: Optional[int] = 1, job_id: Optional[int] = None):
+    """Run pending job(s) now. Without `job_id` only jobs that are DUE run (no time set, or the time has come): a job
+    scheduled for later is never posted early by accident. With `job_id` exactly that job runs, even if it is scheduled
+    for later (the Queue page asks the user first). It takes the same lock as the scheduler and marks a job "running"
+    before the post starts, so the scheduler can never pick up the same job and post it a second time."""
+    executed = []
+    with _job_lock:
+        jobs = load_jobs()                       # read inside the lock: the scheduler may have just finished a job
+        if job_id is not None:
+            if not 0 <= job_id < len(jobs):
+                raise HTTPException(status_code=404, detail="Job not found")
+            if jobs[job_id].get("status", "pending") != "pending":
+                raise HTTPException(status_code=400, detail="That job is not waiting to run (it already ran or is running).")
+            todo = [jobs[job_id]]
+        else:
+            stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+            pending_jobs = [j for j in jobs if j.get("status", "pending") == "pending" and (not j.get("post_at") or j["post_at"] <= stamp)]
+            todo = pending_jobs[:limit] if limit else pending_jobs
+
+        for job in todo:
+            job["status"] = "running"            # saved first, like the scheduler does
             save_jobs(jobs)
-        except Exception as e:
-            job["status"] = "failed"
-            job["error"] = str(e)
+            try:
+                execute(job)
+                executed.append(job)
+            except Exception as e:
+                job["status"] = "failed"
+                job["error"] = str(e)
             save_jobs(jobs)
 
     return {"status": "completed", "executed": len(executed), "jobs": jobs}
@@ -1027,6 +1176,7 @@ def _gallery_files(folder: Path):
     files = []
     if not folder.exists():
         return files
+    meta = vault_meta.snapshot()                  # posted / uploaded labels, read once for the whole listing
     for f in folder.iterdir():
         if f.is_file() and f.suffix.lower() in GALLERY_EXTS:
             stat = f.stat()
@@ -1041,6 +1191,7 @@ def _gallery_files(folder: Path):
                 "is_video": f.suffix.lower() in (".mp4", ".mov"),
                 "created_at": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
                 "timestamp": stat.st_mtime,
+                **vault_meta.info(f, meta),
             })
     files.sort(key=lambda x: x["timestamp"], reverse=True)
     return files
@@ -1076,6 +1227,17 @@ def _lock_map(request: Request) -> dict:
             out["folder:" + name] = folders.lock_state(request, name)
     return out
 
+def _account_folders() -> dict:
+    """{account id: {"folder": its folder, "linked": True when that is a custom folder linked to it}} for every account."""
+    out = {}
+    for a in instagram_api.accounts():
+        try:
+            f = instagram_api.account_folder(a["id"])
+        except instagram_api.InstagramApiError:
+            continue
+        out[str(a["id"])] = {"folder": f, "linked": not instagram_api.folder_is_default(a, f)}
+    return out
+
 def _folder_listing(request: Request, name: str, **extra) -> dict:
     """Files of one folder. A folder with a PIN that has not been entered in this browser lists nothing."""
     state = folders.lock_state(request, name)
@@ -1090,7 +1252,7 @@ def get_gallery(request: Request, scope: str = ""):
     unassigned = _gallery_files(OUTPUT_DIR)
     if not instagram_api.accounts():
         return {"files": unassigned, "count": len(unassigned), "scope": "all", "account": None, "unassigned_count": 0}
-    meta = {"unassigned_count": len(unassigned), "folders": _unlinked_folders(), "locks": _lock_map(request)}
+    meta = {"unassigned_count": len(unassigned), "folders": _unlinked_folders(), "locks": _lock_map(request), "account_folders": _account_folders()}
     if scope == "unassigned":
         return {"files": unassigned, "count": len(unassigned), "scope": "unassigned", "account": None, **meta}
     if scope.startswith("folder:"):
@@ -1102,7 +1264,129 @@ def get_gallery(request: Request, scope: str = ""):
         acc = instagram_api.get_account(scope or None)
     except instagram_api.InstagramApiError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return _folder_listing(request, instagram_api.account_folder(acc["id"]), scope=str(acc["id"]), account=acc.get("username"), **meta)
+    folder = instagram_api.account_folder(acc["id"])
+    linked = not instagram_api.folder_is_default(acc, folder)                          # a custom folder linked to this account
+    return _folder_listing(request, folder, scope=str(acc["id"]), account=acc.get("username"), account_id=str(acc["id"]),
+                           linked=linked, default_folder=instagram_api.default_folder_name(acc), **meta)
+
+# --- Upload pictures (and videos) into the Vault ---
+UPLOAD_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp")
+# what a picture really is (read from its content) -> the extension it is saved with. "MPO" is a JPEG from a phone camera.
+UPLOAD_REAL_FORMATS = {"PNG": ".png", "JPEG": ".jpg", "MPO": ".jpg", "WEBP": ".webp"}
+UPLOAD_VIDEO_EXTS = (".mp4", ".mov")
+MAX_UPLOAD_FILES = 50
+MAX_IMAGE_MB = 30
+MAX_VIDEO_MB = 300
+
+def _upload_target(scope: str, request: Request) -> Path:
+    """The folder an upload goes into. `scope` is named like the Vault's own views: "" = the active account's folder,
+    an account id, "folder:<name>" (a custom folder) or "unassigned" (the plain output folder)."""
+    if scope == "unassigned" or (not scope and not instagram_api.accounts()):
+        return OUTPUT_DIR
+    if scope.startswith("folder:"):
+        name = folders.resolve_folder(scope[len("folder:"):])
+        if not name:
+            raise HTTPException(status_code=400, detail="That folder does not exist.")
+    else:
+        try:
+            acc = instagram_api.get_account(scope or None)
+            name = instagram_api.account_folder(acc["id"])
+        except instagram_api.InstagramApiError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    folders.require_open(request, name)                     # a folder with a PIN must be unlocked first
+    target = OUTPUT_DIR / name
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+def _safe_stem(filename: str) -> str:
+    stem = re.sub(r"[^\w.\- ]+", "_", Path(filename).stem).strip(". _")[:80] or "upload"
+    return "_" + stem if stem.casefold() in folders.RESERVED else stem
+
+def _check_upload(tmp: Path, ext: str) -> str:
+    """Check the saved file's CONTENT and return the extension it should be stored with. Raises ValueError (with a
+    plain-language reason) when it is not a usable picture or video. A picture is judged by what it really is, not by
+    its name: Instagram, for example, saves JPEG pictures with a .webp name, and those are stored as .jpg."""
+    if ext in UPLOAD_IMAGE_EXTS:
+        from PIL import Image
+        try:
+            with Image.open(tmp) as im:
+                fmt = im.format
+                im.verify()
+        except Exception:
+            raise ValueError("it is not a readable picture")
+        real = UPLOAD_REAL_FORMATS.get(fmt or "")
+        if not real:
+            raise ValueError(f"it is a {fmt or 'unknown'} picture, which is not supported (use PNG, JPG or WEBP)")
+        return ext if (ext == ".jpeg" and real == ".jpg") else real
+    with open(tmp, "rb") as f:
+        if f.read(12)[4:8] != b"ftyp":
+            raise ValueError("it is not a real MP4 / MOV video")
+    return ext
+
+@app.post("/api/gallery/upload")
+def upload_to_vault(request: Request, files: List[UploadFile] = File(...), scope: str = Form("")):
+    """Add pictures (PNG, JPG, WEBP) or videos (MP4, MOV) to a Vault folder. Each file is checked: allowed type, size
+    limit, and the content must really match the type. One bad file never stops the others."""
+    if len(files) > MAX_UPLOAD_FILES:
+        raise HTTPException(status_code=400, detail=f"Upload at most {MAX_UPLOAD_FILES} files at a time.")
+    target = _upload_target(scope, request)
+    uploaded, rejected = [], []
+    for f in files:
+        original = Path(f.filename or "").name or "file"
+        ext = Path(original).suffix.lower()
+        if ext not in UPLOAD_IMAGE_EXTS and ext not in UPLOAD_VIDEO_EXTS:
+            rejected.append({"name": original, "reason": "Only PNG, JPG, WEBP pictures and MP4, MOV videos can be uploaded."})
+            continue
+        limit = (MAX_IMAGE_MB if ext in UPLOAD_IMAGE_EXTS else MAX_VIDEO_MB) * 1024 * 1024
+        tmp = target / f".upload-{uuid.uuid4().hex}.tmp"
+        try:
+            size = 0
+            with open(tmp, "wb") as out:
+                while True:
+                    chunk = f.file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > limit:
+                        raise ValueError(f"it is larger than {limit // (1024 * 1024)} MB")
+                    out.write(chunk)
+            if size == 0:
+                raise ValueError("it is empty")
+            real_ext = _check_upload(tmp, ext)
+            stem, final, n = _safe_stem(original), None, 0
+            while final is None or final.exists():
+                final = target / (f"{stem}{real_ext}" if n == 0 else f"{stem}_{n}{real_ext}")
+                n += 1
+            os.replace(tmp, final)
+            vault_meta.mark_uploaded([final])           # the Vault labels it "Uploaded"
+            rel = final.resolve().relative_to(OUTPUT_DIR.resolve()).as_posix()
+            entry = {"filename": final.name, "path": rel, "url": "/output/" + rel, "size_mb": round(size / (1024 * 1024), 2)}
+            if real_ext != ext and not (ext == ".jpeg" and real_ext == ".jpg"):
+                entry["note"] = f"Saved as {real_ext[1:].upper()}: the file is really a {real_ext[1:].upper()} picture, not {ext[1:].upper()}."
+            uploaded.append(entry)
+        except ValueError as e:
+            rejected.append({"name": original, "reason": f"{original}: {e}."})
+        except Exception:
+            rejected.append({"name": original, "reason": f"{original} could not be saved."})
+        finally:
+            tmp.unlink(missing_ok=True)
+    return {"status": "success", "uploaded": uploaded, "rejected": rejected}
+
+class MarkRequest(BaseModel):
+    paths: List[str]            # file paths as listed by /api/gallery
+    posted: bool                # True = label them "Posted", False = remove that label
+
+@app.post("/api/gallery/mark")
+def mark_gallery_files(payload: MarkRequest, request: Request):
+    """Mark files as posted / not posted by hand (for example pictures you posted before the Vault kept track)."""
+    todo = []
+    for rel in payload.paths:
+        folders.require_open(request, folders.folder_of(rel))
+        f = _inside(OUTPUT_DIR, rel)
+        if f and f.is_file() and f.suffix.lower() in GALLERY_EXTS:
+            todo.append(f)
+    vault_meta.set_posted(todo, payload.posted)
+    return {"status": "success", "changed": len(todo)}
 
 class MoveRequest(BaseModel):
     paths: List[str]            # file paths as listed by /api/gallery ("redmedia.inn/x.png" or "x.png")
@@ -1143,6 +1427,7 @@ def move_gallery_files(payload: MoveRequest, request: Request):
             target = dest / f"{src.stem}_{n}{src.suffix}"
             n += 1
         shutil.move(str(src), str(target))
+        vault_meta.move(src, target)                  # its Posted / Uploaded labels go with it
         moved[str(src.resolve())] = str(target.resolve())
     if moved:                                         # keep scheduled jobs pointing at the right file
         with _job_lock:
@@ -1173,6 +1458,7 @@ def delete_gallery_item(filename: str, request: Request):
     target = _inside(OUTPUT_DIR, filename)
     if target and target.exists() and target.is_file() and target.suffix.lower() in GALLERY_EXTS:
         target.unlink()
+        vault_meta.remove(target)
         return {"status": "success", "deleted": filename}
     raise HTTPException(status_code=404, detail="File not found")
 

@@ -3,6 +3,9 @@ import type {
   CaptionResult,
   GalleryListing,
   GenerationStatus,
+  Automation,
+  AutomationFolder,
+  AutomationInput,
   Health,
   IgVerifyError,
   IgAccount,
@@ -97,6 +100,9 @@ export const api = {
   setDefaultIgAccount: (id: string) => request<{ status: string }>(`/api/instagram/accounts/${encodeURIComponent(id)}/default`, { method: "POST" }),
   setIgAccountFolder: (id: string, folder: string) =>
     request<{ folder: string }>(`/api/instagram/accounts/${encodeURIComponent(id)}/folder`, json("POST", { folder })),
+  /** Undo "link folder": the account returns to its own folder and the linked one becomes a custom folder again */
+  unlinkIgAccountFolder: (id: string) =>
+    request<{ previous: string; folder: string }>(`/api/instagram/accounts/${encodeURIComponent(id)}/folder`, { method: "DELETE" }),
   refreshIgAccount: (id: string) => request<{ message: string }>(`/api/instagram/accounts/${encodeURIComponent(id)}/refresh`, { method: "POST" }),
   saveCloudinary: (cloudinary_url: string) => request<{ message: string }>("/api/settings/instagram_api", json("POST", { cloudinary_url })),
   addToQueue: (job: {
@@ -108,18 +114,35 @@ export const api = {
     caption?: string;
     post_at?: string;
   }) => request<{ status: string }>("/api/queue", json("POST", job)),
-  addBatch: (task: string, prompts: string[]) =>
-    request<{ added_count: number }>("/api/queue/batch", json("POST", { task, prompts })),
+  addBatch: (task: string, prompts: string[], inputs: { image?: string; video?: string; face?: string } = {}) =>
+    request<{ added_count: number }>("/api/queue/batch", json("POST", { task, prompts, ...inputs })),
+  /** Uploads a photo or video to the input folder; `url` is what the queue refers to */
+  uploadInput: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<{ url: string; filename: string }>("/api/upload", { method: "POST", body: form });
+  },
+  retryJob: (id: number) => request<{ status: string }>(`/api/queue/${id}/retry`, { method: "POST" }),
   deleteJob: (id: number) => request<{ status: string }>(`/api/queue/${id}`, { method: "DELETE" }),
-  runQueue: (limit = 1) =>
-    request<{ executed: number }>(`/api/queue/run?limit=${limit}`, { method: "POST" }),
+  /** Runs the next due job(s). With `jobId`, runs exactly that job (even one scheduled for later). */
+  runQueue: (limit = 1, jobId?: number) =>
+    request<{ executed: number }>(`/api/queue/run?limit=${limit}${jobId != null ? `&job_id=${jobId}` : ""}`, { method: "POST" }),
 
   gallery: (scope = "") => request<GalleryListing>(`/api/gallery${scope ? `?scope=${encodeURIComponent(scope)}` : ""}`),
   deleteMedia: (path: string) =>
     request<{ status: string }>(`/api/gallery/${path.split("/").map(encodeURIComponent).join("/")}`, { method: "DELETE" }),
+  markPosted: (paths: string[], posted: boolean) =>
+    request<{ changed: number }>("/api/gallery/mark", json("POST", { paths, posted })),
   moveMedia: (paths: string[], to: string) =>
     request<{ moved: number; skipped: number }>("/api/gallery/move", json("POST", { paths, to })),
 
+  /** Adds one picture or video to a Vault folder (`scope` is named like the Vault's views: "", an account id, "folder:<name>" or "unassigned") */
+  uploadToVault: (file: File, scope: string) => {
+    const form = new FormData();
+    form.append("files", file);
+    form.append("scope", scope);
+    return request<{ uploaded: { filename: string; path: string; url: string; size_mb: number; note?: string }[]; rejected: { name: string; reason: string }[] }>("/api/gallery/upload", { method: "POST", body: form });
+  },
   createFolder: (name: string, pin = "") => request<{ name: string; locked: boolean }>("/api/folders", json("POST", { name, pin })),
   deleteFolder: (name: string) => request<{ status: string }>(`/api/folders/${encodeURIComponent(name)}`, { method: "DELETE" }),
   unlockFolder: (name: string, pin: string) =>
@@ -129,6 +152,14 @@ export const api = {
     request<{ status: string }>(`/api/folders/${encodeURIComponent(name)}/pin`, json("POST", { new: pin, current })),
   removeFolderPin: (name: string, current: string) =>
     request<{ status: string }>(`/api/folders/${encodeURIComponent(name)}/pin/remove`, json("POST", { current })),
+
+  automations: () => request<{ rules: Automation[] }>("/api/automations"),
+  automationFolders: () => request<{ folders: AutomationFolder[] }>("/api/automations/folders"),
+  createAutomation: (rule: AutomationInput) => request<{ rule: Automation }>("/api/automations", json("POST", rule)),
+  updateAutomation: (id: string, rule: AutomationInput) => request<{ rule: Automation }>(`/api/automations/${id}`, json("PUT", rule)),
+  deleteAutomation: (id: string) => request<{ status: string }>(`/api/automations/${id}`, { method: "DELETE" }),
+  setAutomationEnabled: (id: string, enabled: boolean) => request<{ rule: Automation }>(`/api/automations/${id}/enabled`, json("POST", { enabled })),
+  runAutomationNow: (id: string) => request<{ status: string }>(`/api/automations/${id}/run-now`, { method: "POST" }),
 
   saveHfTokens: (tokens: string[]) =>
     request<{ message: string }>("/api/settings/hf_tokens", json("POST", { tokens })),

@@ -14,13 +14,14 @@ interface Props<T extends string> {
   value: T;
   onChange: (v: T) => void;
   className?: string;
+  ariaLabel?: string;
 }
 
 /** Pill-style switch with a sliding highlight. */
-export default function Segmented<T extends string>({ options, value, onChange, className }: Props<T>) {
+export default function Segmented<T extends string>({ options, value, onChange, className, ariaLabel }: Props<T>) {
   const id = useId();
   return (
-    <div className={clsx("inline-flex gap-1 p-1 rounded-md bg-surface-2 border border-line", className)}>
+    <div role={ariaLabel ? "group" : undefined} aria-label={ariaLabel} className={clsx("inline-flex gap-1 p-1 rounded-md bg-surface-2 border border-line", className)}>
       {options.map((o) => (
         <button
           key={o.value}
@@ -28,6 +29,7 @@ export default function Segmented<T extends string>({ options, value, onChange, 
           onClick={() => !o.disabled && onChange(o.value)}
           disabled={o.disabled}
           title={o.title}
+          aria-pressed={value === o.value}
           className={clsx(
             "relative flex items-center gap-1.5 px-3.5 py-1.5 rounded-sm text-[13px] font-semibold transition-colors",
             value === o.value ? "text-neutral-950" : "text-muted hover:text-fg",

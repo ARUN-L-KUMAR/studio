@@ -508,6 +508,42 @@ def caption_json(cfg, prompt, media_kind, media_path=None, provider=None, model=
     raise CaptionError("All caption providers failed. " + " | ".join(errors))
 
 
+def generate_prompt_idea(cfg, theme, purpose, avoid=None, provider=None):
+    """One fresh prompt for an image / video generator, written from a theme (used by the daily automations).
+    purpose = what the prompt is for, e.g. "a vertical Reel video" or "motion to animate a given photo".
+    avoid = recent prompts, so the new one is different. Tries the chosen provider, then every other configured one."""
+    system = (
+        "You write prompts for an AI image and video generator that makes Instagram content. "
+        'Reply ONLY with JSON: {"prompt": str}. '
+        "The prompt is ONE vivid sentence of at most 40 words describing a single scene: subject, setting, light, mood"
+        " and, for video, the camera or motion. No hashtags, no quotation marks, no brand names, no real people's names."
+    )
+    text = f"Theme: {theme}. The prompt is for {purpose}."
+    recent = [a for a in (avoid or []) if a][-10:]
+    if recent:
+        text += " Do NOT repeat or closely resemble these earlier prompts: " + " | ".join(r[:120] for r in recent)
+    attempts = _attempts(provider, None, False, cfg.get("provider"))
+    if not attempts:
+        raise CaptionError("No caption AI is configured. Add a Gemini, Groq, OpenRouter or Hugging Face key in Settings.")
+    errors = []
+    for pid, mid in attempts:
+        try:
+            if PROVIDERS[pid].get("kind") == "space":
+                if mid == IMAGE_TO_PROMPT:
+                    raise CaptionError("needs a picture")
+                raw = _call_space(mid, system, text, None)
+            else:
+                raw = _call(pid, mid, system, text, None)
+            idea = str(_parse_json(raw).get("prompt", "")).strip().strip("\"'")
+            if len(idea) < 8:
+                raise CaptionError("empty idea")
+            return idea[:400]
+        except Exception as e:
+            errors.append(f"{pid}/{mid}: {str(e)[:120]}")
+            time.sleep(0.4)
+    raise CaptionError("All caption providers failed. " + " | ".join(errors))
+
+
 def quick_test(provider, model):
     """Tiny round trip used by the Settings 'Test' button. Returns (ms, sample)."""
     system = 'Reply ONLY with JSON: {"caption": str}'

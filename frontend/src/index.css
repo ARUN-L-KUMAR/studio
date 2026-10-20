@@ -26,16 +26,18 @@
   color-scheme: dark;
   --bg: 9 6 11; --surface: 22 16 24; --surface-2: 33 25 36; --surface-3: 48 38 52;
   --line: 255 255 255; --line-a: 0.10;
-  --glass-a: 0.55; --blob-a: 0.55; --grid-a: 0.07;
-  --fg: 250 248 246; --muted: 190 181 175; --dim: 140 131 126;
+  --glass-a: 0.55; --blob-a: 0.42; --grid-a: 0.035;
+  --fg: 250 248 246; --muted: 190 181 175; --dim: 156 147 142;
+  --danger-text: 251 113 133;
 }
 [data-theme="light"] {
   color-scheme: light;
   --bg: 250 246 248; --surface: 255 255 255; --surface-2: 247 241 244; --surface-3: 238 229 234;
   --line: 28 24 24; --line-a: 0.11;
-  --glass-a: 0.72; --blob-a: 0.28; --grid-a: 0.05;
-  --fg: 28 24 24; --muted: 92 84 80; --dim: 125 116 111;
-  --success: 4 120 87; --danger: 225 29 72;
+  --glass-a: 0.72; --blob-a: 0.24; --grid-a: 0.03;
+  --fg: 28 24 24; --muted: 92 84 80; --dim: 108 99 94;
+  --success: 6 95 70; --danger: 225 29 72; --warning: 133 77 14;
+  --danger-text: 190 18 60;
 }
 
 @layer base {
@@ -68,7 +70,7 @@
   /* Neon hairline along the top edge of every card */
   .card::before {
     content: ""; @apply absolute inset-x-8 top-0 h-px pointer-events-none;
-    background: linear-gradient(90deg, transparent, rgb(var(--primary-500) / .7), rgb(var(--secondary-400) / .7), transparent);
+    background: linear-gradient(90deg, transparent, rgb(var(--primary-500) / .3), rgb(var(--secondary-400) / .3), transparent);
   }
   .text-gradient {
     background: linear-gradient(100deg, rgb(var(--primary-400)), rgb(var(--secondary-300)));
@@ -88,11 +90,11 @@
   .card-head { @apply flex items-start justify-between gap-4 mb-5; }
   .card-title { @apply flex items-center gap-2.5 text-[16px] font-bold; }
   .card-title .ic { @apply text-primary-400; }
-  .card-sub { @apply text-[13px] text-muted mt-0.5; }
+  .card-sub { @apply text-[14px] text-muted mt-0.5; }
 
-  .label { @apply flex items-center gap-1.5 text-[12px] font-semibold text-muted mb-1.5; }
+  .label { @apply flex items-center gap-1.5 text-[13px] font-semibold text-muted mb-1.5; }
   .label .ic { @apply text-secondary-400 w-4 h-4; }
-  .hint { @apply text-[12px] text-dim; }
+  .hint { @apply text-[13px] text-dim; }
   .field { @apply mb-4; }
   .form-grid { @apply grid grid-cols-1 sm:grid-cols-2 gap-4; }
 
@@ -114,24 +116,29 @@
   .btn-primary { @apply bg-brand text-neutral-950 shadow-glow hover:-translate-y-0.5 hover:brightness-110; }
   .btn-secondary { @apply bg-fg/10 border border-line text-fg hover:bg-fg/[.16] hover:border-primary-500/50 hover:-translate-y-0.5; }
   .btn-ghost { @apply bg-transparent border border-line text-fg hover:bg-surface-2; }
-  .btn-soft { @apply bg-primary-600/15 text-primary-300 hover:bg-primary-600/25; }
+  .btn-soft { @apply bg-primary-600/15 text-primary-300 hover:bg-primary-600/25; box-shadow: inset 0 0 0 1px rgb(var(--primary-500) / .28); }
   .btn-danger { @apply bg-danger text-white hover:brightness-110; }
   .btn-glass { @apply bg-white/15 text-white backdrop-blur border border-white/25 hover:bg-white/25; }
   .btn-shine::after {
     content: ""; @apply absolute inset-y-0 left-0 w-1/5 bg-white/25 animate-shine pointer-events-none;
   }
 
-  .badge { @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold uppercase tracking-wide; }
+  .badge { @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12px] font-bold uppercase tracking-wide; }
   .badge-pending { @apply bg-fg/10 text-muted; }
   .badge-done { @apply bg-success/15 text-success; }
   .badge-failed { @apply bg-danger/15 text-danger; }
+  .badge-warning { @apply bg-warning/15 text-warning; }
   .badge-primary { @apply bg-primary-600/15 text-primary-300; }
 
   .eyebrow { @apply inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/15 backdrop-blur text-white text-[12px] font-semibold border border-white/20; }
-  .section-head { @apply flex flex-wrap items-end justify-between gap-4 mb-5; }
+  .section-head { @apply flex flex-wrap items-end justify-between gap-4 mb-6; }
   .section-head h2 { @apply text-[22px]; }
-  .section-head p { @apply text-muted text-[13px] mt-0.5; }
+  .section-head p { @apply text-muted text-[14px] mt-0.5; }
 }
+
+/* Soft green buttons: on the light theme the light-green text vanished into the pale green, so use the deep green there */
+[data-theme="light"] .btn-soft { color: rgb(var(--primary-800)); background: rgb(var(--primary-600) / .13); box-shadow: inset 0 0 0 1px rgb(var(--primary-600) / .4); }
+[data-theme="light"] .btn-soft:hover { background: rgb(var(--primary-600) / .22); }
 
 @layer utilities {
   .no-scrollbar::-webkit-scrollbar { display: none; }
@@ -141,6 +148,37 @@
 .hero-swiper .swiper-pagination-bullet { background: #fff; opacity: .5; width: 8px; height: 8px; transition: all .25s; }
 .hero-swiper .swiper-pagination-bullet-active { opacity: 1; width: 26px; border-radius: 6px; background: rgb(var(--secondary-400)); }
 @keyframes kenburns { from { transform: scale(1); } to { transform: scale(1.12); } }
+
+/* A bright arc of light that travels around the edge of the hero. Browsers without @property keep a still border. */
+@property --sweep { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+@keyframes sweep { to { --sweep: 360deg; } }
+.sweep-border { position: relative; }
+.sweep-border::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 2px; pointer-events: none; z-index: 20;
+  background: conic-gradient(from var(--sweep), transparent 0deg, transparent 250deg, rgb(var(--primary-400) / .95) 320deg, rgb(var(--secondary-400) / .9) 350deg, transparent 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  animation: sweep 6s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) { .sweep-border::before { animation: none; } }
+
+/* Red text and pills use a lighter (dark theme) or deeper (light theme) red so they stay readable; solid red buttons keep --danger */
+.text-danger, .badge-failed { color: rgb(var(--danger-text)); }
+
+/* A faint grid behind a section (the page background grid is almost invisible; the hero and pipelines keep a visible one) */
+.grid-faint { position: relative; isolation: isolate; }
+.grid-faint::before {
+  content: ""; position: absolute; inset: -28px -12px; z-index: -1; pointer-events: none;
+  background-image: linear-gradient(rgb(var(--fg) / .06) 1px, transparent 1px), linear-gradient(90deg, rgb(var(--fg) / .06) 1px, transparent 1px);
+  background-size: 40px 40px;
+  -webkit-mask-image: radial-gradient(ellipse 75% 70% at 50% 35%, #000 25%, transparent 75%);
+  mask-image: radial-gradient(ellipse 75% 70% at 50% 35%, #000 25%, transparent 75%);
+}
+
+/* A row that scrolls by itself, forever: the cards are drawn twice and the track slides left by exactly one copy. It stops while the pointer or the keyboard is on it. */
+@keyframes marquee { to { transform: translateX(-50%); } }
+.marquee-track { animation: marquee var(--marquee-s, 40s) linear infinite; will-change: transform; }
+.marquee:hover .marquee-track, .marquee:focus-within .marquee-track, .marquee[data-paused="true"] .marquee-track { animation-play-state: paused; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }

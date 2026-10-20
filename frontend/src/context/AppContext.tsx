@@ -15,7 +15,11 @@ interface AppState {
   unlinkedFolders: FolderInfo[];
   /** Folder name, PIN state and the rest of the last listing of the active account's folder */
   galleryMeta: GalleryListing | null;
+  /** False until the first vault listing has arrived (so the dashboard can show skeletons) */
+  galleryLoaded: boolean;
   online: boolean;
+  /** Quiet refresh of health and queue, for pages that poll */
+  refreshLive: () => Promise<void>;
   refreshAll: () => Promise<void>;
   refreshQueue: () => Promise<void>;
   refreshGallery: () => Promise<void>;
@@ -36,6 +40,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [unlinkedFolders, setUnlinkedFolders] = useState<FolderInfo[]>([]);
   const [galleryMeta, setGalleryMeta] = useState<GalleryListing | null>(null);
   const [online, setOnline] = useState(true);
+  const [galleryLoaded, setGalleryLoaded] = useState(false);
 
   const refreshAll = useCallback(async () => {
     try {
@@ -67,8 +72,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setGalleryMeta(g);
     } catch {
       /* surfaced by health check */
+    } finally {
+      setGalleryLoaded(true);
     }
   }, []);
+
+  const refreshLive = useCallback(async () => {
+    try {
+      setHealth(await api.health());
+      setOnline(true);
+    } catch {
+      setOnline(false);
+    }
+    await refreshQueue();
+  }, [refreshQueue]);
 
   useEffect(() => {
     refreshAll();
@@ -96,8 +113,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [config, toast]);
 
   const value = useMemo(
-    () => ({ health, config, queue, gallery, galleryAccount, unassignedCount, unlinkedFolders, galleryMeta, online, refreshAll, refreshQueue, refreshGallery, setConfig, toggleDryRun }),
-    [health, config, queue, gallery, galleryAccount, unassignedCount, unlinkedFolders, galleryMeta, online, refreshAll, refreshQueue, refreshGallery, toggleDryRun],
+    () => ({ health, config, queue, gallery, galleryAccount, unassignedCount, unlinkedFolders, galleryMeta, galleryLoaded, online, refreshAll, refreshLive, refreshQueue, refreshGallery, setConfig, toggleDryRun }),
+    [health, config, queue, gallery, galleryAccount, unassignedCount, unlinkedFolders, galleryMeta, galleryLoaded, online, refreshAll, refreshLive, refreshQueue, refreshGallery, toggleDryRun],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -1,9 +1,10 @@
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { ChevronLeft, ChevronRight, Download, FolderInput, Play, Send, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, FolderInput, Play, Send, Trash2, Wand2, X } from "lucide-react";
 import clsx from "clsx";
 import type { GalleryFile } from "../../api/types";
+import StatusBadges from "../vault/StatusBadges";
 
 interface Props {
   files: GalleryFile[];
@@ -13,11 +14,13 @@ interface Props {
   onClose: () => void;
   onPost: (f: GalleryFile) => void;
   onMove?: (f: GalleryFile) => void;
+  /** Use this file as the input of a new generation in the Studio */
+  onUse?: (f: GalleryFile) => void;
   onDelete: (f: GalleryFile) => void;
 }
 
 /** Full-screen viewer for the media vault: big picture or video, previous / next, thumbnails, quick actions. */
-export default function MediaViewer({ files, index, onIndex, onClose, onPost, onMove, onDelete }: Props) {
+export default function MediaViewer({ files, index, onIndex, onClose, onPost, onMove, onUse, onDelete }: Props) {
   const count = files.length;
   const open = index !== null && count > 0;
   const i = open ? Math.min(index as number, count - 1) : 0;
@@ -90,11 +93,12 @@ export default function MediaViewer({ files, index, onIndex, onClose, onPost, on
           {/* top bar */}
           <div className="flex items-center gap-3 px-4 sm:px-6 py-3">
             <div className="min-w-0 flex-1">
-              <strong className="block text-[14px] truncate" title={f.filename}>{f.filename}</strong>
+              <strong className="flex items-center gap-2 text-[14px]"><span className="truncate" title={f.filename}>{f.filename}</span><StatusBadges file={f} /></strong>
               <span className="block text-[11px] text-white/55">{f.is_video ? "Reel" : "Image"} · {f.size_mb} MB · {f.created_at}</span>
             </div>
             <span className="text-[12px] font-semibold rounded-full bg-white/10 px-3 py-1">{i + 1} / {count}</span>
             <button className="btn btn-sm btn-glass" onClick={() => onPost(f)}><Send className="ic-sm w-4 h-4" /><span className="hidden sm:inline">Post</span></button>
+            {onUse && <button className="btn btn-sm btn-glass" onClick={() => onUse(f)} aria-label="Use as input in the Studio" title="Use as input in the Studio"><Wand2 className="ic-sm w-4 h-4" /><span className="hidden sm:inline">Generate</span></button>}
             {onMove && <button className="btn btn-sm btn-glass" onClick={() => onMove(f)} aria-label="Move to another folder"><FolderInput className="ic-sm w-4 h-4" /></button>}
             <a className="btn btn-sm btn-glass" href={f.url} download={f.filename} aria-label="Download"><Download className="ic-sm w-4 h-4" /></a>
             <button className="btn btn-sm btn-glass hover:!bg-danger" onClick={() => onDelete(f)} aria-label="Delete"><Trash2 className="ic-sm w-4 h-4" /></button>
